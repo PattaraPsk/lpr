@@ -29,6 +29,11 @@ curated_lpr_dataset/
 */.lpr_session.json
 *.zip
 *.tar.gz
+*.pt
+runs/
+sample_images/
+**/sample_images/
+dataset/
 
 
 

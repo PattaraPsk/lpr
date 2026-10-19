@@ -14,11 +14,11 @@ import tempfile
 from pathlib import Path
 from PIL import Image
 
-if sys.stdout.encoding != 'utf-8':
-    try:
-        sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
+current_dir = Path(__file__).resolve().parent
+if str(current_dir) not in sys.path:
+    sys.path.insert(0, str(current_dir))
+if str(current_dir.parent) not in sys.path:
+    sys.path.insert(0, str(current_dir.parent))
 
 from app.session_manager import SessionManager, ImageItem
 from app.provinces import match_province_value, get_province_entries
@@ -167,17 +167,23 @@ def test_gui_headless():
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     
-    sample_dir = str((Path(__file__).parent / "sample_images").resolve())
-    assert window.session.load_folder(sample_dir)
-    assert len(window.session.items) >= 10
-    
-    window._show_item_at(0)
-    assert window.txt_name.text() != ""
-    assert window.combo_plate_type.get_plate_type_value() != ""
-    
-    # Check dialog test
-    dlg = CheckViewDialog(window.session, 0, window)
-    assert dlg.table.columnCount() == 9 # #, Status, Subfolder, Filename, Name, Plate Type, d3, d4, Province
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        (tmp_path / "cam1").mkdir()
+        for i in range(10):
+            (tmp_path / "cam1" / f"car{i:02d}_WhiteBlackCar_1กก_{1000+i}_กรุงเทพมหานคร.jpg").touch()
+            
+        sample_dir = str(tmp_path)
+        assert window.session.load_folder(sample_dir)
+        assert len(window.session.items) >= 10
+        
+        window._show_item_at(0)
+        assert window.txt_name.text() != ""
+        assert window.combo_plate_type.get_plate_type_value() != ""
+        
+        # Check dialog test
+        dlg = CheckViewDialog(window.session, 0, window)
+        assert dlg.table.columnCount() == 9 # #, Status, Subfolder, Filename, Name, Plate Type, d3, d4, Province
     assert dlg.table.rowCount() == len(window.session.items)
     
     # Test Not Plate fill behavior (does not advance, only fills)

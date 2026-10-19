@@ -125,6 +125,14 @@ class MainWindow(QMainWindow):
         self.btn_check_menu.clicked.connect(self._on_open_check_menu)
         h_layout.addWidget(self.btn_check_menu)
         
+        # OWOD Studio Button
+        self.btn_owod_studio = QPushButton("⚡ OWOD Studio")
+        self.btn_owod_studio.setObjectName("btnOWOD")
+        self.btn_owod_studio.setStyleSheet("background-color: #6366f1; color: white; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
+        self.btn_owod_studio.setToolTip("Open Open-World Object Detection & Model Surgery Studio")
+        self.btn_owod_studio.clicked.connect(self._on_open_owod_studio)
+        h_layout.addWidget(self.btn_owod_studio)
+        
         return header
 
     def _create_edit_panel(self) -> QWidget:
@@ -583,6 +591,14 @@ class MainWindow(QMainWindow):
         dialog.exec()
         self._refresh_subfolder_combo()
         self._update_ui_state()
+
+    def _on_open_owod_studio(self):
+        try:
+            from owod.ui.main_window import OWODMainWindow
+            self.owod_window = OWODMainWindow()
+            self.owod_window.show()
+        except Exception as e:
+            QMessageBox.critical(self, "Error Opening OWOD Studio", str(e))
 
     def closeEvent(self, event):
         self.session.save_session()
