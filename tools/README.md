@@ -47,10 +47,11 @@ For example:
   - **`d4`**: License plate numbers (e.g. `1234`, `9999`).
   - **`Province`**: Searchable dropdown autocomplete with all 77 Thai provinces plus `+` and `-`.
 - **Management & Action Buttons**:
-  - **Correct / Approve** (`Enter`): Marks as approved. Renames file to `{name}_{plate_type}_{d3}_{d4}_{province}.jpg` if any fields were modified.
-  - **Not Plate** (`Ctrl+N`): Saves and renames file to `{name}_+_+_+_+.jpg`.
-  - **Cannot Read** (`Ctrl+D`): Saves and renames file to `{name}_-_-_-_-.jpg`.
+  - **Correct / Approve** (`Enter`): Saves and approves the current image. Renames file according to the filled boxes (e.g. `{name}_{plate_type}_{d3}_{d4}_{province}.jpg`, `{name}_+_+_+_+.jpg`, or `{name}_-_-_-_-.jpg`) and advances to the next image.
+  - **Not Plate** (`Ctrl+N`): Fills all plate boxes with `+`. Save and advance by clicking **Approve**.
+  - **Cannot Read** (`Ctrl+D`): Fills all plate boxes with `-`. Save and advance by clicking **Approve**.
   - **Skip** (`Ctrl+S`): Marks image as skipped for later review.
+
   - **Rename File** (`F2`): Custom manual rename dialog for the entire filename.
   - **Delete Image** (`Delete` / `Ctrl+Delete`): Permanently removes unwanted image from disk with confirmation.
   - **Remove _dup Images** (`🧹 Remove _dup`): Scans and batch removes all images matching `_dup` from disk.

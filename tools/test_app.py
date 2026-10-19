@@ -179,7 +179,25 @@ def test_gui_headless():
     dlg = CheckViewDialog(window.session, 0, window)
     assert dlg.table.columnCount() == 9 # #, Status, Subfolder, Filename, Name, Plate Type, d3, d4, Province
     assert dlg.table.rowCount() == len(window.session.items)
+    
+    # Test Not Plate fill behavior (does not advance, only fills)
+    window._on_not_plate_clicked()
+    assert window.session.current_index == 0
+    assert window.combo_plate_type.get_plate_type_value() == "+"
+    assert window.txt_d3.text() == "+"
+    assert window.txt_d4.text() == "+"
+    assert window.combo_province.get_province_value() == "+"
+    
+    # Test Cannot Read fill behavior (does not advance, only fills)
+    window._on_cannot_read_clicked()
+    assert window.session.current_index == 0
+    assert window.combo_plate_type.get_plate_type_value() == "-"
+    assert window.txt_d3.text() == "-"
+    assert window.txt_d4.text() == "-"
+    assert window.combo_province.get_province_value() == "-"
+    
     print("  -> GUI Headless Instantiation & Load OK")
+
 
 if __name__ == "__main__":
     test_provinces_and_plate_types()

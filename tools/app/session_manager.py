@@ -426,7 +426,13 @@ class SessionManager:
         item.d3 = new_d3
         item.d4 = new_d4
         item.province = new_province
-        item.status = "approved"
+        
+        if new_plate_type == "+" and new_d3 == "+" and new_d4 == "+" and new_province == "+":
+            item.status = "not_plate"
+        elif new_plate_type == "-" and new_d3 == "-" and new_d4 == "-" and new_province == "-":
+            item.status = "cannot_read"
+        else:
+            item.status = "approved"
         
         if changed:
             name = item.name if item.name else "unknown"
@@ -436,6 +442,7 @@ class SessionManager:
             
         self.save_session()
         return True
+
 
     def mark_skipped(self, index: int):
         """Mark as skipped if pending."""

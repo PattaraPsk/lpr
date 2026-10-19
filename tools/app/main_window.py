@@ -234,16 +234,19 @@ class MainWindow(QMainWindow):
         p_layout.addWidget(self.btn_approve)
         
         # Not Plate Button
-        self.btn_not_plate = QPushButton("🚫 Not Plate [_+_+_+_+] (Ctrl+N)")
+        self.btn_not_plate = QPushButton("🚫 Not Plate [+] (Ctrl+N)")
         self.btn_not_plate.setObjectName("btnNotPlate")
+        self.btn_not_plate.setToolTip("Fill all boxes with '+' for Not Plate. Save by clicking Approve.")
         self.btn_not_plate.clicked.connect(self._on_not_plate_clicked)
         p_layout.addWidget(self.btn_not_plate)
         
         # Cannot Read Button
-        self.btn_cannot_read = QPushButton("❓ Cannot Read [-_-_-_-_] (Ctrl+D)")
+        self.btn_cannot_read = QPushButton("❓ Cannot Read [-] (Ctrl+D)")
         self.btn_cannot_read.setObjectName("btnCannotRead")
+        self.btn_cannot_read.setToolTip("Fill all boxes with '-' for Cannot Read. Save by clicking Approve.")
         self.btn_cannot_read.clicked.connect(self._on_cannot_read_clicked)
         p_layout.addWidget(self.btn_cannot_read)
+
         
         # Skip Button
         self.btn_skip = QPushButton("⏭️ Skip (Ctrl+S)")
@@ -455,29 +458,22 @@ class MainWindow(QMainWindow):
         if not self.session.items:
             return
             
-        idx = self.session.current_index
-        self.session.mark_not_plate(idx)
-        self.lbl_status_msg.setText(f"Marked image #{idx + 1} as Not Plate (_+_+_+_+)")
-        
-        next_idx = self.session.get_next_index(idx, self.session.active_subfolder)
-        if next_idx is not None and next_idx != idx:
-            self._show_item_at(next_idx)
-        else:
-            self._show_item_at(idx)
+        self.combo_plate_type.set_plate_type_value("+")
+        self.txt_d3.setText("+")
+        self.txt_d4.setText("+")
+        self.combo_province.set_province_value("+")
+        self.lbl_status_msg.setText("Filled boxes with '+' (Not Plate). Click Approve (Enter) to save.")
 
     def _on_cannot_read_clicked(self):
         if not self.session.items:
             return
             
-        idx = self.session.current_index
-        self.session.mark_cannot_read(idx)
-        self.lbl_status_msg.setText(f"Marked image #{idx + 1} as Cannot Read (_-_-_-_-_)")
-        
-        next_idx = self.session.get_next_index(idx, self.session.active_subfolder)
-        if next_idx is not None and next_idx != idx:
-            self._show_item_at(next_idx)
-        else:
-            self._show_item_at(idx)
+        self.combo_plate_type.set_plate_type_value("-")
+        self.txt_d3.setText("-")
+        self.txt_d4.setText("-")
+        self.combo_province.set_province_value("-")
+        self.lbl_status_msg.setText("Filled boxes with '-' (Cannot Read). Click Approve (Enter) to save.")
+
 
     def _on_skip_clicked(self):
         if not self.session.items:
