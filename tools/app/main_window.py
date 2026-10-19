@@ -1,6 +1,7 @@
 """
 Main Application Window for Thai License Plate (LPR) Annotation & Review.
-Updated to support structure: {name}_{plate_type}_{d3}_{d4}_{province}.{ext}
+Updated to support subfolders, grouping by subfolder, custom rename,
+single image delete, and batch removing '_dup' duplicate images.
 """
 
 import sys
@@ -8,7 +9,8 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QPushButton, QLineEdit, QFileDialog, QMessageBox,
-    QProgressBar, QFrame, QGroupBox, QGridLayout
+    QProgressBar, QFrame, QGroupBox, QGridLayout, QComboBox,
+    QInputDialog
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont, QKeySequence, QIcon, QShortcut
@@ -23,8 +25,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Thai LPR Dataset Annotator & Reviewer")
-        self.resize(1350, 880)
-        self.setMinimumSize(980, 640)
+        self.resize(1380, 890)
+        self.setMinimumSize(1000, 650)
         
         self.session = SessionManager()
         self._init_ui()
@@ -43,15 +45,13 @@ class MainWindow(QMainWindow):
         header_bar = self._create_header_bar()
         main_layout.addWidget(header_bar)
         
-        # 2. Central Splitter
+        # 2. Central Splitter (Left: Viewer, Right: Edit Panel)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(8)
         
-        # Left: Image Viewer
         self.image_viewer = ImageViewerWidget(self)
         splitter.addWidget(self.image_viewer)
         
-        # Right: Edit Panel
         self.edit_panel = self._create_edit_panel()
         splitter.addWidget(self.edit_panel)
         
@@ -69,7 +69,7 @@ class MainWindow(QMainWindow):
         header.setObjectName("headerCard")
         h_layout = QHBoxLayout(header)
         h_layout.setContentsMargins(12, 8, 12, 8)
-        h_layout.setSpacing(12)
+        h_layout.setSpacing(10)
         
         # Open Folder Button
         self.btn_open_folder = QPushButton("📁 Open Folder")
@@ -77,10 +77,25 @@ class MainWindow(QMainWindow):
         self.btn_open_folder.clicked.connect(self._on_open_folder)
         h_layout.addWidget(self.btn_open_folder)
         
-        # Current Folder Label
-        self.lbl_folder_path = QLabel("No folder selected")
-        self.lbl_folder_path.setObjectName("lblFolderPath")
-        h_layout.addWidget(self.lbl_folder_path, 1)
+        # Subfolder Grouping Selector
+        lbl_sf = QLabel("Group Subfolder:")
+        lbl_sf.setStyleSheet("font-weight: bold; color: #a78bfa; margin-left: 4px;")
+        h_layout.addWidget(lbl_sf)
+        
+        self.combo_subfolder = QComboBox()
+        self.combo_subfolder.setObjectName("comboSubfolder")
+        self.combo_subfolder.addItem("All Subfolders", userData="(All)")
+        self.combo_subfolder.currentIndexChanged.connect(self._on_subfolder_changed)
+        h_layout.addWidget(self.combo_subfolder)
+        
+        # Remove _dup Images Button
+        self.btn_clean_dup = QPushButton("🧹 Remove _dup")
+        self.btn_clean_dup.setObjectName("btnCleanDup")
+        self.btn_clean_dup.setToolTip("Find and permanently remove images with '_dup' in their filename")
+        self.btn_clean_dup.clicked.connect(self._on_remove_dup_clicked)
+        h_layout.addWidget(self.btn_clean_dup)
+        
+        h_layout.addStretch()
         
         # Stats Badges
         self.badge_total = QLabel("Total: 0")
@@ -122,7 +137,11 @@ class MainWindow(QMainWindow):
         p_layout.setContentsMargins(16, 16, 16, 16)
         p_layout.setSpacing(12)
         
-        # Current image filename & status header
+        # Subfolder & Filename header
+        self.lbl_current_subfolder = QLabel("Folder: (None)")
+        self.lbl_current_subfolder.setStyleSheet("color: #a78bfa; font-weight: bold; font-size: 12px;")
+        p_layout.addWidget(self.lbl_current_subfolder)
+        
         self.lbl_current_filename = QLabel("No Image Selected")
         self.lbl_current_filename.setObjectName("lblFileName")
         self.lbl_current_filename.setWordWrap(True)
@@ -140,13 +159,12 @@ class MainWindow(QMainWindow):
         grid.setHorizontalSpacing(8)
         grid.setContentsMargins(12, 16, 12, 12)
         
-        # 1. Base Name field
+        # 1. Base Name field (Editable)
         lbl_name = QLabel("Base Name:")
         lbl_name.setStyleSheet("font-weight: 500;")
         self.txt_name = QLineEdit()
         self.txt_name.setPlaceholderText("Prefix / Identifier")
-        self.txt_name.setReadOnly(True)
-        self.txt_name.setStyleSheet("background-color: #21212a; color: #9ca3af;")
+        self.txt_name.returnPressed.connect(self._on_approve_clicked)
         grid.addWidget(lbl_name, 0, 0)
         grid.addWidget(self.txt_name, 0, 1)
         
@@ -187,6 +205,22 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.combo_province, 4, 1)
         
         p_layout.addWidget(gb_edit)
+        
+        # File Manage Row (Rename & Delete)
+        file_actions_box = QHBoxLayout()
+        file_actions_box.setSpacing(8)
+        
+        self.btn_rename_file = QPushButton("✏️ Rename File (F2)")
+        self.btn_rename_file.setObjectName("btnRenameFile")
+        self.btn_rename_file.clicked.connect(self._on_rename_clicked)
+        file_actions_box.addWidget(self.btn_rename_file)
+        
+        self.btn_delete_file = QPushButton("🗑️ Delete Image (Del)")
+        self.btn_delete_file.setObjectName("btnDeleteFile")
+        self.btn_delete_file.clicked.connect(self._on_delete_clicked)
+        file_actions_box.addWidget(self.btn_delete_file)
+        
+        p_layout.addLayout(file_actions_box)
         
         # Action Buttons Group
         lbl_actions = QLabel("Quick Actions:")
@@ -269,6 +303,9 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+N"), self, self._on_not_plate_clicked)
         QShortcut(QKeySequence("Ctrl+D"), self, self._on_cannot_read_clicked)
         QShortcut(QKeySequence("Ctrl+S"), self, self._on_skip_clicked)
+        QShortcut(QKeySequence("Delete"), self, self._on_delete_clicked)
+        QShortcut(QKeySequence("Ctrl+Delete"), self, self._on_delete_clicked)
+        QShortcut(QKeySequence("F2"), self, self._on_rename_clicked)
 
     def _on_open_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Images Folder")
@@ -280,17 +317,47 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Failed to load selected folder.")
             return
             
-        self.lbl_folder_path.setText(folder)
-        self.lbl_folder_path.setToolTip(folder)
+        self._refresh_subfolder_combo()
         
         if not self.session.items:
             self.image_viewer.clear()
             self._update_ui_state()
-            QMessageBox.information(self, "No Images", "No supported images found in this folder.")
+            QMessageBox.information(self, "No Images", "No supported images found in this folder or its subfolders.")
             return
             
         self._show_item_at(self.session.current_index)
-        self.lbl_status_msg.setText(f"Folder loaded. Resumed at image {self.session.current_index + 1} of {len(self.session.items)}.")
+        self.lbl_status_msg.setText(f"Folder loaded with {len(self.session.items)} images. Resumed at #{self.session.current_index + 1}.")
+
+    def _refresh_subfolder_combo(self):
+        self.combo_subfolder.blockSignals(True)
+        self.combo_subfolder.clear()
+        
+        total_count = len(self.session.items)
+        self.combo_subfolder.addItem(f"All Subfolders ({total_count})", userData="(All)")
+        
+        subfolders = self.session.get_subfolders()
+        root_count = len([it for it in self.session.items if not it.subfolder])
+        if root_count > 0 and subfolders:
+            self.combo_subfolder.addItem(f"(Root Folder) ({root_count})", userData="(Root)")
+            
+        for sf in subfolders:
+            sf_count = len([it for it in self.session.items if it.subfolder == sf])
+            self.combo_subfolder.addItem(f"{sf} ({sf_count})", userData=sf)
+            
+        self.combo_subfolder.blockSignals(False)
+
+    def _on_subfolder_changed(self, index: int):
+        data = self.combo_subfolder.currentData()
+        self.session.active_subfolder = None if data == "(All)" else data
+        
+        # Jump to first item in this subfolder if current item doesn't belong to it
+        curr = self.session.get_current_item()
+        filtered = self.session.get_filtered_indices(self.session.active_subfolder)
+        if filtered:
+            if not curr or self.session.current_index not in filtered:
+                self._show_item_at(filtered[0])
+            else:
+                self._update_ui_state()
 
     def _show_item_at(self, index: int):
         if not (0 <= index < len(self.session.items)):
@@ -303,6 +370,8 @@ class MainWindow(QMainWindow):
         self.image_viewer.load_image(str(item.path))
         
         # Update Form Fields
+        sf_display = item.subfolder if item.subfolder else "(Root Folder)"
+        self.lbl_current_subfolder.setText(f"📂 Folder: {sf_display}")
         self.lbl_current_filename.setText(item.filename)
         self.txt_name.setText(item.name)
         self.combo_plate_type.set_plate_type_value(item.plate_type)
@@ -333,7 +402,8 @@ class MainWindow(QMainWindow):
         self.lbl_current_status.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 13px;")
 
     def _update_ui_state(self):
-        stats = self.session.get_stats()
+        active_sf = self.session.active_subfolder
+        stats = self.session.get_stats(active_sf)
         total = stats["total"]
         
         self.badge_total.setText(f"Total: {total}")
@@ -342,10 +412,14 @@ class MainWindow(QMainWindow):
         self.badge_not_plate.setText(f"Not Plate: {stats['not_plate']}")
         self.badge_cannot_read.setText(f"Cannot Read: {stats['cannot_read']}")
         
+        filtered = self.session.get_filtered_indices(active_sf)
         curr_idx = self.session.current_index
-        if total > 0:
-            self.lbl_nav_counter.setText(f"{curr_idx + 1} / {total}")
-            pct = int((stats["processed"] / total) * 100)
+        
+        if filtered and curr_idx in filtered:
+            pos = filtered.index(curr_idx) + 1
+            sf_label = f" ({active_sf})" if active_sf and active_sf != "(All)" else ""
+            self.lbl_nav_counter.setText(f"{pos} / {len(filtered)}{sf_label}")
+            pct = int((stats["processed"] / total) * 100) if total > 0 else 0
             self.progress_bar.setValue(pct)
             self.progress_bar.setFormat(f"{pct}% ({stats['processed']}/{total} done, {stats['left']} left)")
         else:
@@ -353,24 +427,26 @@ class MainWindow(QMainWindow):
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat("0%")
             
-        self.btn_back.setEnabled(curr_idx > 0)
-        self.btn_next.setEnabled(curr_idx < total - 1)
+        self.btn_back.setEnabled(len(filtered) > 1 and curr_idx != filtered[0])
+        self.btn_next.setEnabled(len(filtered) > 1 and curr_idx != filtered[-1])
 
     def _on_approve_clicked(self):
         if not self.session.items:
             return
             
         idx = self.session.current_index
+        name = self.txt_name.text()
         plate_type = self.combo_plate_type.get_plate_type_value()
         d3 = self.txt_d3.text()
         d4 = self.txt_d4.text()
         province = self.combo_province.get_province_value()
         
-        self.session.approve_and_save(idx, plate_type, d3, d4, province)
+        self.session.approve_and_save(idx, name, plate_type, d3, d4, province)
         self.lbl_status_msg.setText(f"Saved & Approved image #{idx + 1}")
         
-        if idx < len(self.session.items) - 1:
-            self._show_item_at(idx + 1)
+        next_idx = self.session.get_next_index(idx, self.session.active_subfolder)
+        if next_idx is not None and next_idx != idx:
+            self._show_item_at(next_idx)
         else:
             self._show_item_at(idx)
             self.lbl_status_msg.setText("Reached last image in folder!")
@@ -383,8 +459,9 @@ class MainWindow(QMainWindow):
         self.session.mark_not_plate(idx)
         self.lbl_status_msg.setText(f"Marked image #{idx + 1} as Not Plate (_+_+_+_+)")
         
-        if idx < len(self.session.items) - 1:
-            self._show_item_at(idx + 1)
+        next_idx = self.session.get_next_index(idx, self.session.active_subfolder)
+        if next_idx is not None and next_idx != idx:
+            self._show_item_at(next_idx)
         else:
             self._show_item_at(idx)
 
@@ -396,8 +473,9 @@ class MainWindow(QMainWindow):
         self.session.mark_cannot_read(idx)
         self.lbl_status_msg.setText(f"Marked image #{idx + 1} as Cannot Read (_-_-_-_-_)")
         
-        if idx < len(self.session.items) - 1:
-            self._show_item_at(idx + 1)
+        next_idx = self.session.get_next_index(idx, self.session.active_subfolder)
+        if next_idx is not None and next_idx != idx:
+            self._show_item_at(next_idx)
         else:
             self._show_item_at(idx)
 
@@ -409,27 +487,105 @@ class MainWindow(QMainWindow):
         self.session.mark_skipped(idx)
         self.lbl_status_msg.setText(f"Skipped image #{idx + 1}")
         
-        if idx < len(self.session.items) - 1:
-            self._show_item_at(idx + 1)
+        next_idx = self.session.get_next_index(idx, self.session.active_subfolder)
+        if next_idx is not None and next_idx != idx:
+            self._show_item_at(next_idx)
         else:
             self._show_item_at(idx)
 
     def _on_back_clicked(self):
-        if self.session.current_index > 0:
-            self._show_item_at(self.session.current_index - 1)
+        prev_idx = self.session.get_prev_index(self.session.current_index, self.session.active_subfolder)
+        if prev_idx is not None and prev_idx != self.session.current_index:
+            self._show_item_at(prev_idx)
 
     def _on_next_clicked(self):
-        if self.session.current_index < len(self.session.items) - 1:
-            self._show_item_at(self.session.current_index + 1)
+        next_idx = self.session.get_next_index(self.session.current_index, self.session.active_subfolder)
+        if next_idx is not None and next_idx != self.session.current_index:
+            self._show_item_at(next_idx)
+
+    def _on_rename_clicked(self):
+        """Custom manual renaming."""
+        item = self.session.get_current_item()
+        if not item:
+            return
+            
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Image File",
+            f"Enter new filename for {item.filename}:",
+            text=item.filename
+        )
+        if ok and new_name.strip():
+            if self.session.custom_rename(self.session.current_index, new_name.strip()):
+                self._show_item_at(self.session.current_index)
+                self.lbl_status_msg.setText(f"Renamed file to {item.filename}")
+            else:
+                QMessageBox.warning(self, "Rename Failed", "Failed to rename file.")
+
+    def _on_delete_clicked(self):
+        """Deletes current image with confirmation."""
+        item = self.session.get_current_item()
+        if not item:
+            return
+            
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete Image",
+            f"Are you sure you want to permanently delete:\n{item.filename}\n\nfrom disk?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            idx = self.session.current_index
+            if self.session.delete_item(idx):
+                self._refresh_subfolder_combo()
+                if self.session.items:
+                    filtered = self.session.get_filtered_indices(self.session.active_subfolder)
+                    next_target = idx if idx in filtered else (filtered[0] if filtered else 0)
+                    self._show_item_at(min(next_target, len(self.session.items) - 1))
+                else:
+                    self.image_viewer.clear()
+                    self._update_ui_state()
+                self.lbl_status_msg.setText("Image deleted from disk.")
+
+    def _on_remove_dup_clicked(self):
+        """Batch remove '_dup' images with confirmation."""
+        active_sf = self.session.active_subfolder
+        dup_indices = self.session.find_dup_items(active_sf)
+        
+        scope_str = f" in '{active_sf}'" if active_sf and active_sf != "(All)" else ""
+        if not dup_indices:
+            QMessageBox.information(self, "No Duplicates Found", f"No images containing '_dup'{scope_str} were found.")
+            return
+            
+        reply = QMessageBox.question(
+            self,
+            "Remove Duplicate Images",
+            f"Found {len(dup_indices)} duplicate image(s) matching '_dup'{scope_str}.\n\n"
+            f"Are you sure you want to permanently DELETE these {len(dup_indices)} image(s) from disk?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            removed_count = self.session.remove_dup_images(active_sf)
+            self._refresh_subfolder_combo()
+            if self.session.items:
+                self._show_item_at(min(self.session.current_index, len(self.session.items) - 1))
+            else:
+                self.image_viewer.clear()
+                self._update_ui_state()
+            QMessageBox.information(self, "Duplicates Removed", f"Successfully deleted {removed_count} duplicate image(s).")
 
     def _on_open_check_menu(self):
         if not self.session.items:
             QMessageBox.information(self, "No Images", "Please open an images folder first.")
             return
             
-        dialog = CheckViewDialog(self.session.items, self.session.current_index, self)
+        dialog = CheckViewDialog(self.session, self.session.current_index, self)
         dialog.image_selected.connect(self._show_item_at)
+        dialog.image_deleted.connect(lambda idx: self._show_item_at(min(self.session.current_index, len(self.session.items) - 1)) if self.session.items else self.image_viewer.clear())
         dialog.exec()
+        self._refresh_subfolder_combo()
         self._update_ui_state()
 
     def closeEvent(self, event):
@@ -466,7 +622,7 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
                 border: 1px solid #2e2e40;
                 border-radius: 6px;
-                margin-top: 8px;
+                margin-top: 6px;
                 padding-top: 10px;
             }
             #groupBoxEdit::title {
@@ -495,7 +651,7 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
                 border: 1px solid #43435c;
                 border-radius: 6px;
-                padding: 8px 14px;
+                padding: 7px 14px;
                 font-size: 13px;
                 font-weight: 600;
             }
@@ -513,6 +669,13 @@ class MainWindow(QMainWindow):
             #btnOpenFolder:hover {
                 background-color: #4338ca;
             }
+            #btnCleanDup {
+                background-color: #7c2d12;
+                border-color: #ea580c;
+            }
+            #btnCleanDup:hover {
+                background-color: #9a3412;
+            }
             #btnCheckMenu {
                 background-color: #0d9488;
                 border-color: #14b8a6;
@@ -520,11 +683,29 @@ class MainWindow(QMainWindow):
             #btnCheckMenu:hover {
                 background-color: #0f766e;
             }
+            #btnRenameFile {
+                background-color: #334155;
+                border-color: #475569;
+                font-size: 12px;
+                padding: 6px;
+            }
+            #btnRenameFile:hover {
+                background-color: #475569;
+            }
+            #btnDeleteFile {
+                background-color: #991b1b;
+                border-color: #dc2626;
+                font-size: 12px;
+                padding: 6px;
+            }
+            #btnDeleteFile:hover {
+                background-color: #b91c1c;
+            }
             #btnApprove {
                 background-color: #16a34a;
                 border-color: #22c55e;
                 font-size: 14px;
-                padding: 10px;
+                padding: 9px;
             }
             #btnApprove:hover {
                 background-color: #15803d;
@@ -532,7 +713,7 @@ class MainWindow(QMainWindow):
             #btnNotPlate {
                 background-color: #2563eb;
                 border-color: #3b82f6;
-                padding: 8px;
+                padding: 7px;
             }
             #btnNotPlate:hover {
                 background-color: #1d4ed8;
@@ -540,7 +721,7 @@ class MainWindow(QMainWindow):
             #btnCannotRead {
                 background-color: #dc2626;
                 border-color: #ef4444;
-                padding: 8px;
+                padding: 7px;
             }
             #btnCannotRead:hover {
                 background-color: #b91c1c;
@@ -548,7 +729,7 @@ class MainWindow(QMainWindow):
             #btnSkip {
                 background-color: #d97706;
                 border-color: #f59e0b;
-                padding: 8px;
+                padding: 7px;
             }
             #btnSkip:hover {
                 background-color: #b45309;

@@ -31,28 +31,39 @@ For example:
 
 
 
+- **Subfolder Support & Grouping**:
+  - Recursively scans all subfolders when opening a folder.
+  - **Group Subfolder Dropdown**: Filter and review images folder by folder or view `All Subfolders`.
+  - Displays the active subfolder path for each image (`📂 Folder: camera1/batch1`).
+  - Session state persists image records by their relative path across subfolders.
+- **Interactive Image Viewer**:
   - **Zoom In / Zoom Out**: Mouse wheel or `＋` / `－` buttons.
   - **Drag / Pan**: Click and drag to pan across zoomed-in images.
   - **Fit View** & **1:1** actual size buttons.
 - **Plate Annotation Fields**:
+  - **`Base Name`**: Editable image prefix/identifier.
+  - **`Plate Type`**: Dropdown with visual color preview and badge (`CAR`, `MC`, `VAN`, `TAXI`, etc.).
   - **`d3`**: License plate category characters / letters (e.g. `1กข`, `ขก`).
   - **`d4`**: License plate numbers (e.g. `1234`, `9999`).
-  - **`Province`**: Searchable dropdown autocomplete with all 77 Thai provinces (searchable in Thai or English) plus special codes:
-    - `+` (Not License Plate)
-    - `-` (Cannot Read)
-- **Quick Action Buttons & Shortcuts**:
-  - **Correct / Approve** (`Enter`): Marks as approved. If `d3`, `d4`, or `province` were edited, renames the file to `{name}_{d3}_{d4}_{province}.jpg`.
-  - **Not Plate** (`Ctrl+N`): Saves and renames file to `{name}_+_+_+.jpg`.
-  - **Cannot Read** (`Ctrl+D`): Saves and renames file to `{name}_-_-_-.jpg`.
+  - **`Province`**: Searchable dropdown autocomplete with all 77 Thai provinces plus `+` and `-`.
+- **Management & Action Buttons**:
+  - **Correct / Approve** (`Enter`): Marks as approved. Renames file to `{name}_{plate_type}_{d3}_{d4}_{province}.jpg` if any fields were modified.
+  - **Not Plate** (`Ctrl+N`): Saves and renames file to `{name}_+_+_+_+.jpg`.
+  - **Cannot Read** (`Ctrl+D`): Saves and renames file to `{name}_-_-_-_-.jpg`.
   - **Skip** (`Ctrl+S`): Marks image as skipped for later review.
-  - **Back / Next** (`Left Arrow` / `Right Arrow`): Navigate through images.
+  - **Rename File** (`F2`): Custom manual rename dialog for the entire filename.
+  - **Delete Image** (`Delete` / `Ctrl+Delete`): Permanently removes unwanted image from disk with confirmation.
+  - **Remove _dup Images** (`🧹 Remove _dup`): Scans and batch removes all images matching `_dup` from disk.
+  - **Back / Next** (`Left Arrow` / `Right Arrow`): Navigates through images within current subfolder filter.
 - **Status Dashboard**:
   - Shows counters for **Total**, **Left**, **Approved**, **Not Plate**, **Cannot Read**, and a progress bar with percentage.
 - **Check Menu**:
-  - Click **📋 Check Menu** to open a comprehensive status table.
-  - Filter images by: **All**, **Skipped ⚠️**, **Pending ⏳**, **Approved ✅**, **Not Plate 🚫**, **Cannot Read ❓**.
-  - Search by filename, characters, numbers, or province.
+  - Click **📋 Check Menu** to open a comprehensive 9-column status table including **Subfolder** and **Plate Type**.
+  - Filter images by: **All**, **Skipped ⚠️**, **Pending ⏳**, **Approved ✅**, **Not Plate 🚫**, **Cannot Read ❓**, and **Duplicates (_dup) 🧹**.
+  - Subfolder dropdown filter inside the check menu.
+  - **Delete Image** button directly from the table.
   - Double-click or select any row and click **Jump to Selected Image** to immediately jump to that image.
+
 
 ---
 
