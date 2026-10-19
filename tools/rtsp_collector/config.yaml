@@ -1,0 +1,41 @@
+# ==============================================================================
+# ISO-Compliant RTSP Stream Ingestion Configuration
+# ISO/IEC 20547 (Big Data Reference Architecture)
+# ISO/IEC 25012 (Data Quality Requirements)
+# ISO 8601 (Time & Partitioning Standards)
+# ==============================================================================
+
+stream:
+  # RTSP URL will fall back to environment variable RTSP_URL if left empty or templated
+  stream_url: "${RTSP_URL}"
+  camera_id: "CAM01"
+  channel_id: "101"
+  location_tag: "Main_Entrance"
+  transport: "tcp"              # "tcp" or "udp" (TCP recommended for WAN/lossless capture)
+  socket_timeout_seconds: 10   # Maximum time in seconds to wait for stream data
+
+ingestion:
+  segment_duration_seconds: 900 # 15 minutes per video segment
+  ffmpeg_path: "ffmpeg"
+  ffprobe_path: "ffprobe"
+  copy_codecs: true             # Lossless H.264 stream copy (-c:v copy)
+  enable_faststart: true        # Places MP4 'moov' atom at beginning (-movflags +faststart)
+
+storage:
+  base_dir: "dataset/Raw Video Record"
+  staging_dir: "dataset/Raw Video Record/.staging"
+  partition_pattern: "{camera_id}/%Y/%m/%d"
+  filename_pattern: "{camera_id}_CH{channel_id}_{start_iso}.mp4"
+  min_disk_free_gb: 5.0         # Safety halt limit if free disk space is lower than this
+
+quality_assurance:
+  compute_sha256: true          # ISO 25012 data integrity checksum
+  verify_media_headers: true    # ffprobe stream consistency and frame check
+  generate_sidecar_json: true   # Sidecar metadata file per video chunk
+  manifest_filename: "manifest.jsonl" # Central immutable data lineage catalog
+
+resilience:
+  max_reconnect_attempts: -1    # -1 for infinite automatic reconnection
+  initial_retry_delay_sec: 2.0
+  max_retry_delay_sec: 60.0
+  backoff_multiplier: 1.5

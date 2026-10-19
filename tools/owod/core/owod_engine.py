@@ -69,25 +69,54 @@ class OWODDetector:
         self.iou_threshold = iou_threshold
         self.device = device
         self.model = None
+        self.vehicle_model = None
+        self.lpr_model = None
         self.is_loaded = False
         self.is_mock = False
         self._load_model()
         
     def _load_model(self):
-        """Attempts to load YOLO-World / Ultralytics model, falling back to CV heuristic if needed."""
+        """Loads dedicated neural license plate detector, vehicle detector, and base model."""
         try:
             from ultralytics import YOLO
             
-            # Resolve model path
+            # 1. Dedicated neural license plate detector (prioritizes YOLOv11x / YOLOv11s)
+            for lp_cand in [
+                Path("yolov11x_license_plate.pt"),
+                Path("../yolov11x_license_plate.pt"),
+                Path("../../yolov11x_license_plate.pt"),
+                Path("yolov11s_license_plate.pt"),
+                Path("../yolov11s_license_plate.pt"),
+                Path("../../yolov11s_license_plate.pt"),
+                Path("license_plate_best.pt"),
+                Path("../license_plate_best.pt"),
+                Path("../../license_plate_best.pt")
+            ]:
+                if lp_cand.exists():
+                    try:
+                        self.lpr_model = YOLO(str(lp_cand.resolve()))
+                        print(f"[OWODDetector] Loaded Pretrained Neural License Plate Detector: {lp_cand.name}")
+                        break
+                    except Exception:
+                        pass
+
+            # 2. Base model
             local_model = Path(self.model_path)
             if not local_model.exists():
-                # Check root or tools
-                for candidate in [Path("yolov8s-worldv2.pt"), Path("../yolov8s-worldv2.pt"), Path("../../yolov8s-worldv2.pt")]:
+                for candidate in [Path("yolov8s-worldv2.pt"), Path("../yolov8s-worldv2.pt"), Path("../../yolov8s-worldv2.pt"), Path("yolov8s.pt")]:
                     if candidate.exists():
                         self.model_path = str(candidate.resolve())
                         break
                         
             self.model = YOLO(self.model_path)
+            
+            # 3. Vehicle proposal model
+            for v_cand in [Path("yolov8s.pt"), Path("../yolov8s.pt"), Path("../../yolov8s.pt")]:
+                if v_cand.exists():
+                    self.vehicle_model = YOLO(str(v_cand.resolve()))
+                    break
+            if self.vehicle_model is None:
+                self.vehicle_model = self.model
             
             # If YOLO-World, set custom open-world classes
             classes = [c.strip() for c in self.prompt.split(",") if c.strip()]
@@ -95,12 +124,15 @@ class OWODDetector:
                 classes = ["license plate", "car plate", "number plate", "vehicle registration plate"]
                 
             if hasattr(self.model, "set_classes"):
-                self.model.set_classes(classes)
+                try:
+                    self.model.set_classes(classes)
+                except Exception:
+                    pass
                 
             self.is_loaded = True
             self.is_mock = False
         except Exception as e:
-            print(f"[OWODDetector] Ultralytics/Torch model load notice ({e}). Using Heuristic CV Detector.")
+            print(f"[OWODDetector] Model load notice ({e}). Using Heuristic CV Detector.")
             self.is_loaded = True
             self.is_mock = True
 
@@ -125,13 +157,11 @@ class OWODDetector:
             
         fn_lower = filename_hint.lower()
         
-        # 1. Check if the image itself is already a cropped license plate
-        # Indicators: in 'plates' directory, or filename matches plate types (WhiteBlackCar, etc.)
+        # 1. Pre-cropped plate check
         is_known_crop = any(ind in fn_lower for ind in self.KNOWN_PLATE_INDICATORS)
-        is_tiny_crop = (h <= 160 and w <= 320 and 1.2 <= (w / float(h)) <= 5.0)
+        is_tiny_crop = (h <= 180 and w <= 360 and 0.8 <= (w / float(h)) <= 5.0)
         
         if is_known_crop or is_tiny_crop:
-            # The entire image is the license plate!
             return [Detection(
                 x1=0.0,
                 y1=0.0,
@@ -142,100 +172,159 @@ class OWODDetector:
                 class_id=0
             )]
             
-        # 2. Check if explicitly marked as Non-Plate / OOD (+_+_+_+ or unreadable)
+        # 2. Non-Plate / OOD check
         if "+_+_+_+" in fn_lower or "-_-_-_-" in fn_lower:
             return []
             
-        # 3. Full scene / video frame detection using YOLO-World
-        if not self.is_mock and self.model is not None:
+        img_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+        detections = []
+        
+        # 3. Obtain vehicle proposals to strictly constrain search & eliminate tree/sky errors
+        vehicle_detector = self.vehicle_model if self.vehicle_model is not None else self.model
+        vehicle_boxes = []
+        if vehicle_detector is not None and not self.is_mock:
             try:
-                img_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
-                results = self.model.predict(
+                v_results = vehicle_detector.predict(
                     img_bgr,
-                    conf=self.conf_threshold,
-                    iou=self.iou_threshold,
+                    conf=0.25,
                     device=self.device,
                     verbose=False
-                )
+                )[0]
+                vehicle_classes = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
+                for b in v_results.boxes:
+                    cls_id = int(b.cls[0])
+                    if cls_id in vehicle_classes:
+                        v_type = 'motorcycle' if cls_id == 3 else 'car'
+                        vx1, vy1, vx2, vy2 = [int(v) for v in b.xyxy[0].cpu().numpy()]
+                        vehicle_boxes.append((vx1, vy1, vx2, vy2, v_type))
+            except Exception as e:
+                pass
+
+        # 4. Neural License Plate Detection (at 1280 resolution)
+        if self.lpr_model is not None:
+            try:
+                lpr_res = self.lpr_model.predict(
+                    img_bgr,
+                    imgsz=1280,
+                    conf=0.18,
+                    device=self.device,
+                    verbose=False
+                )[0]
                 
-                detections = []
-                for r in results:
-                    boxes = r.boxes
-                    if boxes is None or len(boxes) == 0:
+                for b in lpr_res.boxes:
+                    px1, py1, px2, py2 = [float(p) for p in b.xyxy[0].cpu().numpy()]
+                    p_conf = float(b.conf[0])
+                    pw = px2 - px1
+                    ph = py2 - py1
+                    if pw < 14 or ph < 8:
                         continue
-                    xyxy = boxes.xyxy.cpu().numpy()
-                    confs = boxes.conf.cpu().numpy()
-                    
-                    for i in range(len(xyxy)):
-                        x1, y1, x2, y2 = xyxy[i]
-                        conf = float(confs[i])
+                    p_ar = pw / float(ph)
+                    if not (1.1 <= p_ar <= 4.8):
+                        continue
+                        
+                    # Verify plate is associated with a detected vehicle
+                    # And STRICTLY reject wheel / side-door regions of side-view cars!
+                    associated = False
+                    for vx1, vy1, vx2, vy2, v_type in vehicle_boxes:
+                        if (px1 >= vx1 - 25 and px2 <= vx2 + 25 and py1 >= vy1 and py2 <= vy2 + 25):
+                            vw = vx2 - vx1
+                            vh = vy2 - vy1
+                            # If car is side-profile, reject central door / wheel area
+                            if v_type == 'car' and (vw / float(vh) > 1.65):
+                                rel_x = (px1 + pw/2.0 - vx1) / float(vw)
+                                if 0.20 <= rel_x <= 0.80:
+                                    continue # Wheel / side skirt area!
+                            associated = True
+                            break
+                            
+                    if associated:
                         detections.append(Detection(
-                            x1=float(x1),
-                            y1=float(y1),
-                            x2=float(x2),
-                            y2=float(y2),
-                            confidence=round(conf, 3),
+                            x1=round(px1, 1),
+                            y1=round(py1, 1),
+                            x2=round(px2, 1),
+                            y2=round(py2, 1),
+                            confidence=round(p_conf, 3),
                             label="license plate",
                             class_id=0
                         ))
-                        
-                if detections:
-                    return detections
             except Exception as e:
                 pass
-                
-        # 4. Fallback CV heuristic detector looking for rectangular license plates
-        return self._heuristic_plate_detect(image_rgb)
 
-    def _heuristic_plate_detect(self, image_rgb: np.ndarray) -> List[Detection]:
-        """Computer Vision heuristic detector looking for license-plate-like rectangles."""
-        h, w = image_rgb.shape[:2]
-        if h < 20 or w < 20:
-            return []
+        # 5. Dedicated Motorcycle Plate Extractor (Thai 3-line portrait plates)
+        for vx1, vy1, vx2, vy2, v_type in vehicle_boxes:
+            if v_type != 'motorcycle':
+                continue
+                
+            vw = vx2 - vx1
+            vh = vy2 - vy1
+            m_roi_y1 = max(0, vy1 + int(vh * 0.35))
+            m_roi_y2 = min(h, vy2)
+            m_roi_x1 = max(0, vx1)
+            m_roi_x2 = min(w, vx2)
             
-        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
-        blur = cv2.bilateralFilter(gray, 9, 75, 75)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 3))
-        tophat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, kernel)
-        
-        grad_x = cv2.Sobel(tophat, ddepth=cv2.CV_32F, dx=1, dy=0, ksize=-1)
-        grad_x = np.absolute(grad_x)
-        min_val, max_val = np.min(grad_x), np.max(grad_x)
-        if max_val > min_val:
-            grad_x = (255 * ((grad_x - min_val) / (max_val - min_val))).astype("uint8")
-        else:
-            grad_x = grad_x.astype("uint8")
+            m_roi = img_bgr[m_roi_y1:m_roi_y2, m_roi_x1:m_roi_x2]
+            if m_roi.shape[0] < 15 or m_roi.shape[1] < 15:
+                continue
+                
+            hsv = cv2.cvtColor(m_roi, cv2.COLOR_BGR2HSV)
+            white_mask = cv2.inRange(hsv, np.array([0, 0, 135]), np.array([180, 50, 255]))
+            yellow_mask = cv2.inRange(hsv, np.array([12, 50, 135]), np.array([36, 255, 255]))
+            color_mask = cv2.bitwise_or(white_mask, yellow_mask)
             
-        grad_x = cv2.GaussianBlur(grad_x, (5, 5), 0)
-        grad_x = cv2.morphologyEx(grad_x, cv2.MORPH_CLOSE, kernel)
-        _, thresh = cv2.threshold(grad_x, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        detections = []
-        for c in contours:
-            x, y, bw, bh = cv2.boundingRect(c)
-            aspect_ratio = bw / float(bh) if bh > 0 else 0
-            area = bw * bh
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3))
+            clean_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
+            cnts, _ = cv2.findContours(clean_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            min_area = (w * h) * 0.003
-            max_area = (w * h) * 0.40
-            
-            if 1.4 <= aspect_ratio <= 4.8 and min_area <= area <= max_area:
-                conf = min(0.95, 0.65 + (0.30 * (1.0 - abs(aspect_ratio - 2.8) / 2.8)))
-                if conf >= self.conf_threshold:
-                    detections.append(Detection(
-                        x1=float(x),
-                        y1=float(y),
-                        x2=float(x + bw),
-                        y2=float(y + bh),
-                        confidence=round(conf, 3),
-                        label="license plate",
-                        class_id=0
-                    ))
-                    
-        detections.sort(key=lambda d: d.confidence, reverse=True)
-        return detections[:5]
+            for c in cnts:
+                cx, cy, cw, ch = cv2.boundingRect(c)
+                if cw < 14 or ch < 12:
+                    continue
+                ar = cw / float(ch)
+                area = cw * ch
+                # Thai motorcycle plate AR: 0.50 to 1.60
+                if 0.50 <= ar <= 1.60 and (0.002 * (vw * vh) <= area <= 0.16 * (vw * vh)):
+                    # Strictly reject if on ground pavement / wheel contact point
+                    if m_roi_y1 + cy + ch >= vy2 - 4:
+                        continue
+                    fill = cv2.contourArea(c) / float(area)
+                    if fill < 0.40:
+                        continue
+                    # Character stroke density
+                    cand_gray = cv2.cvtColor(m_roi[cy:cy+ch, cx:cx+cw], cv2.COLOR_BGR2GRAY)
+                    sobel_x = np.abs(cv2.Sobel(cand_gray, cv2.CV_32F, 1, 0, ksize=3))
+                    if np.max(sobel_x) > 0:
+                        _, eth = cv2.threshold((sobel_x/np.max(sobel_x)*255).astype(np.uint8), 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+                        if np.mean(eth > 0) >= 0.08:
+                            detections.append(Detection(
+                                x1=float(m_roi_x1 + cx),
+                                y1=float(m_roi_y1 + cy),
+                                x2=float(m_roi_x1 + cx + cw),
+                                y2=float(m_roi_y1 + cy + ch),
+                                confidence=0.92,
+                                label="license plate",
+                                class_id=0
+                            ))
+                            
+        # Deduplicate detections with IoU > 0.40
+        dedup = []
+        for det in detections:
+            overlap = False
+            for d in dedup:
+                ix1 = max(det.x1, d.x1)
+                iy1 = max(det.y1, d.y1)
+                ix2 = min(det.x2, d.x2)
+                iy2 = min(det.y2, d.y2)
+                iw = max(0.0, ix2 - ix1)
+                ih = max(0.0, iy2 - iy1)
+                inter = iw * ih
+                union = (det.x2 - det.x1)*(det.y2 - det.y1) + (d.x2 - d.x1)*(d.y2 - d.y1) - inter
+                if union > 0 and (inter / union) > 0.40:
+                    overlap = True
+                    break
+            if not overlap:
+                dedup.append(det)
+                
+        return dedup
 
     @staticmethod
     def draw_detections(
