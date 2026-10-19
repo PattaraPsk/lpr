@@ -9,24 +9,26 @@ The application reads and saves image files following the 5-element structure:
 {name}_{plate_type}_{d3}_{d4}_{province}.jpg
 ```
 For example:
-- `car01_white_black_1กก_1234_กรุงเทพมหานคร.jpg`
-- `front_cam01_yellow_black_ทส_9999_กรุงเทพมหานคร.jpg`
-- `gate_in_car4_yellow_blue_10_4567_ขอนแก่น.jpg`
+- `car01_WhiteBlackCar_1กก_1234_กรุงเทพมหานคร.jpg`
+- `motor02_WhiteBlackMotor_1กข_999_เชียงใหม่.jpg`
+- `front_cam01_YellowBlack_ทส_9999_กรุงเทพมหานคร.jpg`
+- `gate_in_car4_YellowBlue_10_4567_ขอนแก่น.jpg`
 - `sample_not_plate_+_+_+_+.jpg`
 - `sample_unreadable_-_-_-_-.jpg`
 
-### Supported Plate Types:
-1. **White / Black - Car** (`white_black_car`): Private passenger cars (≤ 7 seats)
-2. **White / Black - Motor** (`white_black_motor`): Standard private motorcycles
-3. **White / Blue** (`white_blue`): Small buses, vans, passenger vehicles > 7 seats
-4. **White / Green** (`white_green`): Private pickup trucks
-5. **Yellow / Black** (`yellow_black`): Commercial hire vehicles, taxis, motorcycle taxis
-6. **Yellow / Blue** (`yellow_blue`): Fixed-route local buses or songthaews
-7. **Yellow / Green** (`yellow_green`): Public tuk-tuks
-8. **Green / White** (`green_white`): Tour, hotel, airport, or limousine services
-9. **Red / Black** (`red_black`): Temporary or dealer registration plates
-10. **Orange / Black** (`orange_black`): Agricultural vehicles, tractors, construction rollers
+### Supported Plate Types (Uppercase Separation):
+1. **White / Black - Car** (`WhiteBlackCar`): Private passenger cars (≤ 7 seats)
+2. **White / Black - Motor** (`WhiteBlackMotor`): Standard private motorcycles
+3. **White / Blue** (`WhiteBlue`): Small buses, vans, passenger vehicles > 7 seats
+4. **White / Green** (`WhiteGreen`): Private pickup trucks
+5. **Yellow / Black** (`YellowBlack`): Commercial hire vehicles, taxis, motorcycle taxis
+6. **Yellow / Blue** (`YellowBlue`): Fixed-route local buses or songthaews
+7. **Yellow / Green** (`YellowGreen`): Public tuk-tuks
+8. **Green / White** (`GreenWhite`): Tour, hotel, airport, or limousine services
+9. **Red / Black** (`RedBlack`): Temporary or dealer registration plates
+10. **Orange / Black** (`OrangeBlack`): Agricultural vehicles, tractors, construction rollers
 - **Special codes**: `+` (Not license plate) and `-` (Cannot read)
+
 
 
   - **Zoom In / Zoom Out**: Mouse wheel or `＋` / `－` buttons.

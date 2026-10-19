@@ -2,6 +2,8 @@
 Generate mock test dataset for Thai LPR annotator testing.
 Creates a folder named 'sample_images' with structure:
 {name}_{plate_type}_{d3}_{d4}_{province}.jpg
+Uses Uppercase separation (PascalCase) for plate types:
+WhiteBlackCar, WhiteBlackMotor, WhiteBlue, WhiteGreen, YellowBlack, YellowBlue, YellowGreen, GreenWhite, RedBlack, OrangeBlack
 """
 
 import os
@@ -18,103 +20,100 @@ if sys.stdout.encoding != 'utf-8':
 def generate_samples():
     sample_dir = Path(__file__).parent / "sample_images"
     sample_dir.mkdir(exist_ok=True)
-
+    
     # Samples with (filename, plate_text, prov_text, plate_type_desc, plate_bg, plate_text_color)
     samples = [
         # 1. White Background with Black Letters: Private passenger cars (<= 7 seats)
         (
-
-            "car01_white_black_car_1กก_1234_กรุงเทพมหานคร.jpg",
+            "car01_WhiteBlackCar_1กก_1234_กรุงเทพมหานคร.jpg",
             "1กก 1234", "กรุงเทพมหานคร",
             "White/Black - Car (<= 7 seats)",
             (255, 255, 255), (0, 0, 0)
         ),
         # 2. White Background with Black Letters: Standard private motorcycles
         (
-            "motor02_white_black_motor_1กข_999_เชียงใหม่.jpg",
+            "motor02_WhiteBlackMotor_1กข_999_เชียงใหม่.jpg",
             "1กข 999", "เชียงใหม่",
             "White/Black - Motorcycle",
             (255, 255, 255), (0, 0, 0)
         ),
         # 3. White Background with Blue Letters: Vans, microbuses (> 7 seats)
         (
-            "van03_white_blue_2ขค_5678_เชียงใหม่.jpg",
+            "van03_WhiteBlue_2ขค_5678_เชียงใหม่.jpg",
             "2ขค 5678", "เชียงใหม่",
             "White/Blue (Van > 7 seats)",
             (255, 255, 255), (20, 60, 220)
         ),
-
-        # 3. White Background with Green Letters: Private pickup trucks
+        # 4. White Background with Green Letters: Private pickup trucks
         (
-            "pickup03_white_green_1ผผ_7890_ชลบุรี.jpg",
+            "pickup04_WhiteGreen_1ผผ_7890_ชลบุรี.jpg",
             "1ผผ 7890", "ชลบุรี",
             "White/Green (Pickup truck)",
             (255, 255, 255), (20, 140, 40)
         ),
-        # 4. Yellow Background with Black Letters: Taxis, commercial hire
+        # 5. Yellow Background with Black Letters: Taxis, commercial hire
         (
-            "taxi04_yellow_black_ทส_9999_กรุงเทพมหานคร.jpg",
+            "taxi05_YellowBlack_ทส_9999_กรุงเทพมหานคร.jpg",
             "ทส 9999", "กรุงเทพมหานคร",
             "Yellow/Black (Taxi)",
             (250, 204, 21), (0, 0, 0)
         ),
-        # 5. Yellow Background with Blue Letters: Fixed-route local public buses / songthaews
+        # 6. Yellow Background with Blue Letters: Fixed-route local public buses / songthaews
         (
-            "bus05_yellow_blue_10_4567_ขอนแก่น.jpg",
+            "bus06_YellowBlue_10_4567_ขอนแก่น.jpg",
             "10-4567", "ขอนแก่น",
             "Yellow/Blue (Songthaew/Bus)",
             (250, 204, 21), (20, 60, 220)
         ),
-        # 6. Yellow Background with Green Letters: Public tuk-tuks
+        # 7. Yellow Background with Green Letters: Public tuk-tuks
         (
-            "tuktuk06_yellow_green_สกร_123_ภูเก็ต.jpg",
+            "tuktuk07_YellowGreen_สกร_123_ภูเก็ต.jpg",
             "สกร 123", "ภูเก็ต",
             "Yellow/Green (Tuk-Tuk)",
             (250, 204, 21), (20, 140, 40)
         ),
-        # 7. Green Background with White Letters: Limousine / hotel / tour service
+        # 8. Green Background with White Letters: Limousine / hotel / tour service
         (
-            "limo07_green_white_ณข_8888_สุราษฎร์ธานี.jpg",
+            "limo08_GreenWhite_ณข_8888_สุราษฎร์ธานี.jpg",
             "ณข 8888", "สุราษฎร์ธานี",
             "Green/White (Limo/Tour)",
             (20, 140, 40), (255, 255, 255)
         ),
-        # 8. Red Background with Black Letters: Temporary / dealer plate
+        # 9. Red Background with Black Letters: Temporary / dealer plate
         (
-            "newcar08_red_black_ก_0001_กรุงเทพมหานคร.jpg",
+            "newcar09_RedBlack_ก_0001_กรุงเทพมหานคร.jpg",
             "ก-0001", "กรุงเทพมหานคร",
             "Red/Black (Temporary/Dealer)",
             (220, 38, 38), (0, 0, 0)
         ),
-        # 9. Orange Background with Black Letters: Agricultural vehicles, tractors
+        # 10. Orange Background with Black Letters: Agricultural vehicles, tractors
         (
-            "tractor09_orange_black_ตค_3333_นครราชสีมา.jpg",
+            "tractor10_OrangeBlack_ตค_3333_นครราชสีมา.jpg",
             "ตค 3333", "นครราชสีมา",
             "Orange/Black (Tractor/Agricultural)",
             (234, 88, 12), (0, 0, 0)
         ),
         # Multi-underscore name
         (
-            "camera_gate_in_car10_white_black_5กภ_6789_นนทบุรี.jpg",
+            "camera_gate_in_car11_WhiteBlackCar_5กภ_6789_นนทบุรี.jpg",
             "5กภ 6789", "นนทบุรี",
-            "White/Black (Gate Camera In)",
+            "White/Black - Car (Gate Camera In)",
             (255, 255, 255), (0, 0, 0)
         ),
         # Pre-labeled Not Plate
         (
-            "obstacle11_+_+_+_+.jpg",
+            "obstacle12_+_+_+_+.jpg",
             "NOT A LICENSE PLATE", "+",
             "Not Plate",
             (200, 200, 200), (80, 80, 80)
         ),
         # Pre-labeled Cannot Read
         (
-            "blurred12_-_-_-_-.jpg",
+            "blurred13_-_-_-_-.jpg",
             "BLURRED / UNREADABLE", "-",
             "Cannot Read",
             (160, 160, 160), (40, 40, 40)
         ),
-
     ]
     
     for filename, plate_text, prov_text, desc, plate_bg, plate_fg in samples:

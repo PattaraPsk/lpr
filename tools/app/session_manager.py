@@ -21,7 +21,7 @@ class ImageItem:
         
         # Parsed elements
         self.name: str = ""
-        self.plate_type: str = "white_black_car"
+        self.plate_type: str = "WhiteBlackCar"
         self.d3: str = ""
         self.d4: str = ""
         self.province: str = ""
@@ -34,8 +34,8 @@ class ImageItem:
     def parse_filename(self):
         """
         Parses filename structure: {name}_{plate_type}_{d3}_{d4}_{province}.{ext}
-        Supports compound plate_types with underscores (e.g. white_black_car, white_black_motor),
-        special codes (+, -), and allows underscores inside {name}.
+        Supports Uppercase-separated plate types (e.g. WhiteBlackCar, WhiteBlackMotor, YellowBlue),
+        legacy underscore aliases, special codes (+, -), and allows underscores inside {name}.
         """
         from .plate_types import PLATE_TYPES_DATA, SPECIAL_PLATE_TYPES, match_plate_type
         
@@ -43,7 +43,7 @@ class ImageItem:
         if len(parts) == 4:
             prefix, self.d3, self.d4, self.province = parts
             
-            # Map of token -> canonical id (including aliases like white_black -> white_black_car)
+            # Map of token -> canonical id (including aliases)
             tokens_map = {}
             for pt in PLATE_TYPES_DATA:
                 tokens_map[pt["id"]] = pt["id"]
@@ -69,25 +69,26 @@ class ImageItem:
                     self.plate_type = match_plate_type(p_type)
                 else:
                     self.name = prefix
-                    self.plate_type = "white_black_car"
+                    self.plate_type = "WhiteBlackCar"
         elif len(parts) == 3:
             self.name = parts[0]
-            self.plate_type = "white_black_car"
+            self.plate_type = "WhiteBlackCar"
             self.d3 = parts[1]
             self.d4 = parts[2]
             self.province = ""
         elif len(parts) == 2:
             self.name = parts[0]
-            self.plate_type = "white_black_car"
+            self.plate_type = "WhiteBlackCar"
             self.d3 = parts[1]
             self.d4 = ""
             self.province = ""
         else:
             self.name = self.stem
-            self.plate_type = "white_black_car"
+            self.plate_type = "WhiteBlackCar"
             self.d3 = ""
             self.d4 = ""
             self.province = ""
+
 
             
         # Pre-detect status if named with + or -

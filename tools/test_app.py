@@ -33,14 +33,16 @@ def test_provinces_and_plate_types():
     assert pt_entries[1][0] == "-"
     
     # Test plate type matching
-    assert match_plate_type("white_black_car") == "white_black_car"
-    assert match_plate_type("white_black_motor") == "white_black_motor"
-    assert match_plate_type("white_black") == "white_black_car" # alias
-    assert match_plate_type("motorcycle") == "white_black_motor" # alias
-    assert match_plate_type("white_blue") == "white_blue"
-    assert match_plate_type("wbl") == "white_blue"
-    assert match_plate_type("yellow_black") == "yellow_black"
-    assert match_plate_type("orange_black") == "orange_black"
+    assert match_plate_type("WhiteBlackCar") == "WhiteBlackCar"
+    assert match_plate_type("white_black_car") == "WhiteBlackCar"
+    assert match_plate_type("WhiteBlackMotor") == "WhiteBlackMotor"
+    assert match_plate_type("white_black_motor") == "WhiteBlackMotor"
+    assert match_plate_type("white_black") == "WhiteBlackCar" # alias
+    assert match_plate_type("motorcycle") == "WhiteBlackMotor" # alias
+    assert match_plate_type("WhiteBlue") == "WhiteBlue"
+    assert match_plate_type("white_blue") == "WhiteBlue"
+    assert match_plate_type("YellowBlack") == "YellowBlack"
+    assert match_plate_type("OrangeBlack") == "OrangeBlack"
     assert match_plate_type("+") == "+"
     assert match_plate_type("-") == "-"
     print("  -> Provinces & Plate Types OK")
@@ -51,10 +53,10 @@ def test_session_manager():
         tmp_path = Path(tmp_dir)
         
         # Create test images with {name}_{plate_type}_{d3}_{d4}_{province}.{ext}
-        img1 = tmp_path / "camera_front_white_black_car_1กก_1234_กรุงเทพมหานคร.jpg"
+        img1 = tmp_path / "camera_front_WhiteBlackCar_1กก_1234_กรุงเทพมหานคร.jpg"
         img2 = tmp_path / "truck01_+_+_+_+.jpg"
         img3 = tmp_path / "van02_-_-_-_-.jpg"
-        img4 = tmp_path / "bike03_white_black_motor_1ขข_999_เชียงใหม่.png"
+        img4 = tmp_path / "bike03_WhiteBlackMotor_1ขข_999_เชียงใหม่.png"
         
         dummy_img = Image.new("RGB", (100, 100), color=(255, 255, 255))
         for p in [img1, img2, img3, img4]:
@@ -67,13 +69,12 @@ def test_session_manager():
         # Test 5-part parsing
         item1 = next(it for it in session.items if "camera_front" in it.name)
         assert item1.name == "camera_front"
-        assert item1.plate_type == "white_black_car"
+        assert item1.plate_type == "WhiteBlackCar"
         assert item1.d3 == "1กก"
         assert item1.d4 == "1234"
         assert item1.province == "กรุงเทพมหานคร"
         assert item1.status == "pending"
 
-        
         item2 = next(it for it in session.items if it.name == "truck01")
         assert item2.plate_type == "+"
         assert item2.d3 == "+"
@@ -89,7 +90,7 @@ def test_session_manager():
         assert item3.status == "cannot_read"
         
         item4 = next(it for it in session.items if it.name == "bike03")
-        assert item4.plate_type == "white_black_motor"
+        assert item4.plate_type == "WhiteBlackMotor"
         assert item4.d3 == "1ขข"
         assert item4.d4 == "999"
         assert item4.province == "เชียงใหม่"
@@ -102,7 +103,7 @@ def test_session_manager():
         assert session.mark_not_plate(idx1)
         assert item1.filename == "camera_front_+_+_+_+.jpg"
         assert (tmp_path / "camera_front_+_+_+_+.jpg").exists()
-        assert not (tmp_path / "camera_front_white_black_car_1กก_1234_กรุงเทพมหานคร.jpg").exists()
+        assert not (tmp_path / "camera_front_WhiteBlackCar_1กก_1234_กรุงเทพมหานคร.jpg").exists()
         assert item1.status == "not_plate"
         assert item1.plate_type == "+"
         
@@ -116,11 +117,11 @@ def test_session_manager():
         assert item4.plate_type == "-"
         
         # Test Edit & Approve -> {name}_{plate_type}_{d3}_{d4}_{province}.{ext}
-        assert session.approve_and_save(idx1, "white_green", "3กก", "5555", "ชลบุรี")
-        assert item1.filename == "camera_front_white_green_3กก_5555_ชลบุรี.jpg"
-        assert (tmp_path / "camera_front_white_green_3กก_5555_ชลบุรี.jpg").exists()
+        assert session.approve_and_save(idx1, "WhiteGreen", "3กก", "5555", "ชลบุรี")
+        assert item1.filename == "camera_front_WhiteGreen_3กก_5555_ชลบุรี.jpg"
+        assert (tmp_path / "camera_front_WhiteGreen_3กก_5555_ชลบุรี.jpg").exists()
         assert item1.status == "approved"
-        assert item1.plate_type == "white_green"
+        assert item1.plate_type == "WhiteGreen"
         
         print("  -> Actions & Renaming OK")
         
@@ -137,10 +138,11 @@ def test_session_manager():
         
         reloaded_item1 = next(it for it in session2.items if "camera_front" in it.name)
         assert reloaded_item1.status == "approved"
-        assert reloaded_item1.plate_type == "white_green"
+        assert reloaded_item1.plate_type == "WhiteGreen"
         assert reloaded_item1.d3 == "3กก"
         assert reloaded_item1.d4 == "5555"
         assert reloaded_item1.province == "ชลบุรี"
+
         
         stats = session2.get_stats()
         print(f"  Stats: {stats}")
