@@ -21,7 +21,7 @@ class ImageItem:
         
         # Parsed elements
         self.name: str = ""
-        self.plate_type: str = "white_black"
+        self.plate_type: str = "white_black_car"
         self.d3: str = ""
         self.d4: str = ""
         self.province: str = ""
@@ -34,55 +34,61 @@ class ImageItem:
     def parse_filename(self):
         """
         Parses filename structure: {name}_{plate_type}_{d3}_{d4}_{province}.{ext}
-        Supports compound plate_types with underscores (e.g. white_black, yellow_blue),
+        Supports compound plate_types with underscores (e.g. white_black_car, white_black_motor),
         special codes (+, -), and allows underscores inside {name}.
         """
-        from .plate_types import PLATE_TYPES_DATA, SPECIAL_PLATE_TYPES
+        from .plate_types import PLATE_TYPES_DATA, SPECIAL_PLATE_TYPES, match_plate_type
         
         parts = self.stem.rsplit('_', 3)
         if len(parts) == 4:
             prefix, self.d3, self.d4, self.province = parts
             
-            # Known plate type tokens (longest first)
-            known_tokens = [pt["id"] for pt in PLATE_TYPES_DATA] + [s[0] for s in SPECIAL_PLATE_TYPES]
-            known_tokens.sort(key=len, reverse=True)
-            
+            # Map of token -> canonical id (including aliases like white_black -> white_black_car)
+            tokens_map = {}
+            for pt in PLATE_TYPES_DATA:
+                tokens_map[pt["id"]] = pt["id"]
+                for a in pt.get("aliases", []):
+                    tokens_map[a] = pt["id"]
+            for s, _ in SPECIAL_PLATE_TYPES:
+                tokens_map[s] = s
+                
+            sorted_tokens = sorted(tokens_map.keys(), key=len, reverse=True)
             matched = False
-            for token in known_tokens:
+            for token in sorted_tokens:
                 suffix = f"_{token}"
                 if prefix.endswith(suffix):
                     self.name = prefix[:-len(suffix)]
-                    self.plate_type = token
+                    self.plate_type = tokens_map[token]
                     matched = True
                     break
                     
             if not matched:
-                # If prefix has an underscore, split it into name and plate_type
                 if '_' in prefix:
                     p_name, p_type = prefix.rsplit('_', 1)
                     self.name = p_name
-                    self.plate_type = p_type
+                    self.plate_type = match_plate_type(p_type)
                 else:
                     self.name = prefix
-                    self.plate_type = "white_black"
+                    self.plate_type = "white_black_car"
         elif len(parts) == 3:
             self.name = parts[0]
-            self.plate_type = "white_black"
+            self.plate_type = "white_black_car"
             self.d3 = parts[1]
             self.d4 = parts[2]
             self.province = ""
         elif len(parts) == 2:
             self.name = parts[0]
-            self.plate_type = "white_black"
+            self.plate_type = "white_black_car"
             self.d3 = parts[1]
             self.d4 = ""
             self.province = ""
         else:
             self.name = self.stem
-            self.plate_type = "white_black"
+            self.plate_type = "white_black_car"
             self.d3 = ""
             self.d4 = ""
             self.province = ""
+
             
         # Pre-detect status if named with + or -
         if self.d3 == "+" and self.d4 == "+" and self.province == "+":

@@ -28,13 +28,15 @@ def test_provinces_and_plate_types():
     assert prov_entries[1][0] == "-"
     
     pt_entries = get_plate_type_entries()
-    assert len(pt_entries) == 11 # 2 special (+, -) + 9 plate types
+    assert len(pt_entries) == 12 # 2 special (+, -) + 10 plate types (car & motor separated)
     assert pt_entries[0][0] == "+"
     assert pt_entries[1][0] == "-"
     
     # Test plate type matching
-    assert match_plate_type("white_black") == "white_black"
-    assert match_plate_type("wb") == "white_black"
+    assert match_plate_type("white_black_car") == "white_black_car"
+    assert match_plate_type("white_black_motor") == "white_black_motor"
+    assert match_plate_type("white_black") == "white_black_car" # alias
+    assert match_plate_type("motorcycle") == "white_black_motor" # alias
     assert match_plate_type("white_blue") == "white_blue"
     assert match_plate_type("wbl") == "white_blue"
     assert match_plate_type("yellow_black") == "yellow_black"
@@ -49,10 +51,10 @@ def test_session_manager():
         tmp_path = Path(tmp_dir)
         
         # Create test images with {name}_{plate_type}_{d3}_{d4}_{province}.{ext}
-        img1 = tmp_path / "camera_front_white_black_1กก_1234_กรุงเทพมหานคร.jpg"
+        img1 = tmp_path / "camera_front_white_black_car_1กก_1234_กรุงเทพมหานคร.jpg"
         img2 = tmp_path / "truck01_+_+_+_+.jpg"
         img3 = tmp_path / "van02_-_-_-_-.jpg"
-        img4 = tmp_path / "bus03_yellow_blue_2ขข_9999_เชียงใหม่.png"
+        img4 = tmp_path / "bike03_white_black_motor_1ขข_999_เชียงใหม่.png"
         
         dummy_img = Image.new("RGB", (100, 100), color=(255, 255, 255))
         for p in [img1, img2, img3, img4]:
@@ -65,11 +67,12 @@ def test_session_manager():
         # Test 5-part parsing
         item1 = next(it for it in session.items if "camera_front" in it.name)
         assert item1.name == "camera_front"
-        assert item1.plate_type == "white_black"
+        assert item1.plate_type == "white_black_car"
         assert item1.d3 == "1กก"
         assert item1.d4 == "1234"
         assert item1.province == "กรุงเทพมหานคร"
         assert item1.status == "pending"
+
         
         item2 = next(it for it in session.items if it.name == "truck01")
         assert item2.plate_type == "+"
@@ -85,10 +88,10 @@ def test_session_manager():
         assert item3.province == "-"
         assert item3.status == "cannot_read"
         
-        item4 = next(it for it in session.items if it.name == "bus03")
-        assert item4.plate_type == "yellow_blue"
-        assert item4.d3 == "2ขข"
-        assert item4.d4 == "9999"
+        item4 = next(it for it in session.items if it.name == "bike03")
+        assert item4.plate_type == "white_black_motor"
+        assert item4.d3 == "1ขข"
+        assert item4.d4 == "999"
         assert item4.province == "เชียงใหม่"
         
         print("  -> 5-Part Parsing OK")
@@ -99,15 +102,16 @@ def test_session_manager():
         assert session.mark_not_plate(idx1)
         assert item1.filename == "camera_front_+_+_+_+.jpg"
         assert (tmp_path / "camera_front_+_+_+_+.jpg").exists()
-        assert not (tmp_path / "camera_front_white_black_1กก_1234_กรุงเทพมหานคร.jpg").exists()
+        assert not (tmp_path / "camera_front_white_black_car_1กก_1234_กรุงเทพมหานคร.jpg").exists()
         assert item1.status == "not_plate"
         assert item1.plate_type == "+"
         
         # Test Cannot Read on item4 -> {name}_-_-_-_-.png
         idx4 = session.items.index(item4)
         assert session.mark_cannot_read(idx4)
-        assert item4.filename == "bus03_-_-_-_-.png"
-        assert (tmp_path / "bus03_-_-_-_-.png").exists()
+        assert item4.filename == "bike03_-_-_-_-.png"
+        assert (tmp_path / "bike03_-_-_-_-.png").exists()
+
         assert item4.status == "cannot_read"
         assert item4.plate_type == "-"
         

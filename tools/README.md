@@ -16,16 +16,18 @@ For example:
 - `sample_unreadable_-_-_-_-.jpg`
 
 ### Supported Plate Types:
-1. **White / Black** (`white_black`): Private passenger cars (≤ 7 seats) & motorcycles
-2. **White / Blue** (`white_blue`): Small buses, vans, passenger vehicles > 7 seats
-3. **White / Green** (`white_green`): Private pickup trucks
-4. **Yellow / Black** (`yellow_black`): Commercial hire vehicles, taxis, motorcycle taxis
-5. **Yellow / Blue** (`yellow_blue`): Fixed-route local buses or songthaews
-6. **Yellow / Green** (`yellow_green`): Public tuk-tuks
-7. **Green / White** (`green_white`): Tour, hotel, airport, or limousine services
-8. **Red / Black** (`red_black`): Temporary or dealer registration plates
-9. **Orange / Black** (`orange_black`): Agricultural vehicles, tractors, construction rollers
+1. **White / Black - Car** (`white_black_car`): Private passenger cars (≤ 7 seats)
+2. **White / Black - Motor** (`white_black_motor`): Standard private motorcycles
+3. **White / Blue** (`white_blue`): Small buses, vans, passenger vehicles > 7 seats
+4. **White / Green** (`white_green`): Private pickup trucks
+5. **Yellow / Black** (`yellow_black`): Commercial hire vehicles, taxis, motorcycle taxis
+6. **Yellow / Blue** (`yellow_blue`): Fixed-route local buses or songthaews
+7. **Yellow / Green** (`yellow_green`): Public tuk-tuks
+8. **Green / White** (`green_white`): Tour, hotel, airport, or limousine services
+9. **Red / Black** (`red_black`): Temporary or dealer registration plates
+10. **Orange / Black** (`orange_black`): Agricultural vehicles, tractors, construction rollers
 - **Special codes**: `+` (Not license plate) and `-` (Cannot read)
+
 
   - **Zoom In / Zoom Out**: Mouse wheel or `＋` / `－` buttons.
   - **Drag / Pan**: Click and drag to pan across zoomed-in images.

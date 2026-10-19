@@ -19,23 +19,31 @@ def generate_samples():
     sample_dir = Path(__file__).parent / "sample_images"
     sample_dir.mkdir(exist_ok=True)
 
-    
     # Samples with (filename, plate_text, prov_text, plate_type_desc, plate_bg, plate_text_color)
     samples = [
-        # 1. White Background with Black Letters: Private passenger cars (<= 7 seats) / motorcycles
+        # 1. White Background with Black Letters: Private passenger cars (<= 7 seats)
         (
-            "car01_white_black_1กก_1234_กรุงเทพมหานคร.jpg",
+
+            "car01_white_black_car_1กก_1234_กรุงเทพมหานคร.jpg",
             "1กก 1234", "กรุงเทพมหานคร",
-            "White/Black (Car <= 7 seats)",
+            "White/Black - Car (<= 7 seats)",
             (255, 255, 255), (0, 0, 0)
         ),
-        # 2. White Background with Blue Letters: Vans, microbuses (> 7 seats)
+        # 2. White Background with Black Letters: Standard private motorcycles
         (
-            "van02_white_blue_2ขค_5678_เชียงใหม่.jpg",
+            "motor02_white_black_motor_1กข_999_เชียงใหม่.jpg",
+            "1กข 999", "เชียงใหม่",
+            "White/Black - Motorcycle",
+            (255, 255, 255), (0, 0, 0)
+        ),
+        # 3. White Background with Blue Letters: Vans, microbuses (> 7 seats)
+        (
+            "van03_white_blue_2ขค_5678_เชียงใหม่.jpg",
             "2ขค 5678", "เชียงใหม่",
             "White/Blue (Van > 7 seats)",
             (255, 255, 255), (20, 60, 220)
         ),
+
         # 3. White Background with Green Letters: Private pickup trucks
         (
             "pickup03_white_green_1ผผ_7890_ชลบุรี.jpg",

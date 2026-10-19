@@ -30,9 +30,9 @@ class PlateTypeComboBox(QComboBox):
         if line_edit:
             line_edit.setPlaceholderText("Select or search plate type...")
 
-    def _create_color_icon(self, bg_hex: str, text_hex: str, border_hex: str = "#000000") -> QIcon:
-        """Create a small 24x16 icon simulating plate colors"""
-        pixmap = QPixmap(24, 16)
+    def _create_color_icon(self, bg_hex: str, text_hex: str, border_hex: str = "#000000", badge_text: str = "••") -> QIcon:
+        """Create a small 28x16 icon simulating plate colors and type"""
+        pixmap = QPixmap(28, 16)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -40,11 +40,15 @@ class PlateTypeComboBox(QComboBox):
         # Fill background
         painter.setBrush(QColor(bg_hex))
         painter.setPen(QColor(border_hex))
-        painter.drawRoundedRect(0, 0, 23, 15, 3, 3)
+        painter.drawRoundedRect(0, 0, 27, 15, 3, 3)
         
-        # Draw small inner letter indicator
+        # Draw small inner letter indicator / badge
         painter.setPen(QColor(text_hex))
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "••")
+        font = painter.font()
+        font.setPointSize(7)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, badge_text)
         painter.end()
         return QIcon(pixmap)
 
@@ -53,10 +57,13 @@ class PlateTypeComboBox(QComboBox):
         for val, disp in SPECIAL_PLATE_TYPES:
             self.addItem(disp, userData=val)
             
-        # Add 9 plate types with visual color icons
+        # Add plate types with visual color icons and badges
         for pt in PLATE_TYPES_DATA:
-            icon = self._create_color_icon(pt["bg_color"], pt["text_color"], pt["border_color"])
+            icon = self._create_color_icon(
+                pt["bg_color"], pt["text_color"], pt["border_color"], pt.get("badge_text", "••")
+            )
             self.addItem(icon, pt["display"], userData=pt["id"])
+
 
     def _on_completer_activated(self, text):
         idx = self.findText(text)
