@@ -1,0 +1,3 @@
+"""
+Thai LPR Annotator Package
+"""
