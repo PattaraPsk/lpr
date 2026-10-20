@@ -1,0 +1,56 @@
+# ==============================================================================
+# Thai License Plate Recognition (ALPR/ANPR) - Master Configuration
+# ==============================================================================
+
+pipeline:
+  name: "Thai Edge LPR Production Pipeline"
+  version: "2.0.0"
+  target_device: "auto"       # "auto", "cuda", or "cpu"
+  log_level: "INFO"           # "DEBUG", "INFO", "WARNING", "ERROR"
+
+detector:
+  backend: "yolo"             # "yolo" (YOLO-World/YOLOv8), "onnx", or "owlvit"
+  model_path: "models/yolov8s-worldv2.pt"
+  confidence_threshold: 0.25
+  nms_threshold: 0.45
+  padding_ratio: 0.06         # 6% border padding to preserve edge glyphs
+  target_classes:
+    - "license plate"
+    - "vehicle registration plate"
+    - "number plate"
+  input_size: [640, 640]
+  half_precision: true        # FP16 acceleration on CUDA
+
+ocr:
+  engine: "segmenter"         # "segmenter" (morphological CCA), "vlm" (Qwen2-VL), or "onnx"
+  target_char_height: 128
+  deskew_plate: true
+  max_deskew_angle: 25.0
+  filter_screws: true
+  vlm_model: "Qwen/Qwen2-VL-2B-Instruct"
+
+formatting:
+  enforce_thai_dlt_rules: true
+  default_province: "กรุงเทพมหานคร"
+  fuzzy_province_matching: true
+  output_format: "{consonants}_{digits}_{province}"
+
+stream:
+  queue_size: 2               # Non-blocking bounded queue
+  drop_frames_when_full: true # Zero-latency frame-dropping on RTSP lag
+  reconnect_delay_sec: 5.0
+  max_fps: 30.0
+
+tracking:
+  enabled: true
+  iou_threshold: 0.30
+  max_lost_frames: 15
+  ema_alpha: 0.75             # Exponential moving average centroid smoothing
+
+visualization:
+  show_bounding_boxes: true
+  show_labels: true
+  show_fps: true
+  box_thickness: 2
+  font_scale: 0.55
+  box_color: [0, 230, 118]    # Emerald Green (BGR)

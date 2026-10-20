@@ -1,0 +1,21 @@
+# Detector & ROI Configuration for selen-lpr
+
+detector:
+  backend: "yolo"                       # "yolo" or "onnx"
+  weights: "models/detector/best.onnx"
+  fallback_weights: "../pipeline/models/yolov8s-worldv2.pt"
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+  input_size: [640, 640]
+  crop_margin_ratio: 0.05
+
+roi:
+  adaptive_foreground: true
+  min_motion_area: 2500
+  padding_ratio: 0.15                   # Margin around vehicle foreground
+  max_stale_frames: 5
+
+classifier:
+  color_space: "LAB"                    # LAB is perceptually uniform for color distance
+  min_contrast_ratio: 2.0
+  consonant_rule_fallback: true         # Use OCR letters to resolve color ambiguities

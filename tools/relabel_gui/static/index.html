@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Thai LPR Dataset Relabeling Studio</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Inter:wght@400;500;600;700&family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+
+  <!-- Top Navigation Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo">
+        <span class="logo-icon">🏷️</span>
+        <div class="logo-text">
+          <h1>Thai LPR Relabeling Studio</h1>
+          <span class="subtext">Edge ANPR Dataset Engineering</span>
+        </div>
+      </div>
+      
+      <!-- Mode Tabs -->
+      <nav class="mode-tabs">
+        <button id="tab-detection" class="tab-btn active" onclick="switchMode('detection')">
+          <span class="tab-icon">🎯</span> YOLO Detection Editor
+        </button>
+        <button id="tab-ocr" class="tab-btn" onclick="switchMode('ocr')">
+          <span class="tab-icon">🔤</span> License Plate OCR Editor
+        </button>
+      </nav>
+    </div>
+
+    <div class="header-right">
+      <!-- Folder Selector -->
+      <div class="folder-bar">
+        <span class="folder-label">📁 Directory:</span>
+        <select id="quick-dir-select" onchange="onQuickDirSelect(this.value)">
+          <option value="">-- Select Project Dataset Folder --</option>
+        </select>
+        <input type="text" id="dir-input" placeholder="D:\Projects-anti\lpr\..." spellcheck="false">
+        <button class="btn btn-secondary" onclick="loadDirectory()">Load</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="main-layout">
+    
+    <!-- Left Sidebar: File Explorer & Dataset Stats -->
+    <aside class="sidebar-left">
+      <div class="sidebar-section stats-panel">
+        <div class="stats-header">
+          <h3>Dataset Progress</h3>
+          <span id="progress-percent" class="badge badge-primary">0%</span>
+        </div>
+        <div class="progress-bar-container">
+          <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%"></div>
+        </div>
+        <div class="stats-details">
+          <span>Labeled: <b id="stat-labeled">0</b></span>
+          <span>Remaining: <b id="stat-remaining">0</b></span>
+          <span>Total: <b id="stat-total">0</b></span>
+        </div>
+      </div>
+
+      <!-- File Filter and Search -->
+      <div class="file-filter-bar">
+        <input type="text" id="file-search" placeholder="Search filenames..." oninput="filterFiles()">
+        <div class="filter-pills">
+          <button class="pill active" data-filter="all" onclick="setFileFilter('all')">All</button>
+          <button class="pill" data-filter="unlabeled" onclick="setFileFilter('unlabeled')">Unlabeled</button>
+          <button class="pill" data-filter="labeled" onclick="setFileFilter('labeled')">Labeled</button>
+        </div>
+      </div>
+
+      <!-- File List -->
+      <div class="file-list-container" id="file-list-container">
+        <div class="empty-hint">Load a directory to display dataset images.</div>
+      </div>
+    </aside>
+
+    <!-- Center Workspace -->
+    <main class="center-workspace">
+      
+      <!-- Top Image Navigation Bar -->
+      <div class="workspace-nav-bar">
+        <div class="nav-controls">
+          <button class="btn btn-icon" title="Previous Image (Left Arrow)" onclick="navigateImage(-1)">◀ Prev</button>
+          <span class="current-file-badge">
+            <span id="current-file-name">No image selected</span>
+            <span id="current-file-counter" class="sub-counter">(- / -)</span>
+          </span>
+          <button class="btn btn-icon" title="Next Image (Right Arrow / Enter)" onclick="navigateImage(1)">Next ▶</button>
+        </div>
+
+        <div class="workspace-actions">
+          <button class="btn btn-danger btn-sm" title="Move to Trash (Del)" onclick="discardCurrentImage()">🗑️ Discard</button>
+          <span class="shortcut-tip">Shortcuts: <b>←</b> Prev | <b>→</b> Next | <b>Enter</b> Save</span>
+        </div>
+      </div>
+
+      <!-- Detection Workspace (YOLO Canvas Editor) -->
+      <div id="detection-workspace" class="mode-workspace active">
+        <!-- Floating Canvas Toolbar -->
+        <div class="canvas-toolbar">
+          <div class="tool-group">
+            <button class="btn btn-sm btn-secondary" onclick="canvasZoom(1.2)" title="Zoom In">+</button>
+            <button class="btn btn-sm btn-secondary" onclick="canvasZoom(0.8)" title="Zoom Out">-</button>
+            <button class="btn btn-sm btn-secondary" onclick="resetCanvasTransform()" title="Fit Screen">Reset</button>
+          </div>
+          <div class="tool-group">
+            <button class="btn btn-sm btn-purple" onclick="runAiAutoDetect()" id="btn-auto-detect">
+              🤖 Auto-Detect (YOLO)
+            </button>
+            <input type="range" id="yolo-conf" min="0.1" max="0.9" step="0.05" value="0.25" title="YOLO Confidence" oninput="updateConfLabel(this.value)">
+            <span id="conf-label" class="conf-badge">Conf: 0.25</span>
+          </div>
+          <div class="tool-group">
+            <button class="btn btn-sm btn-danger" onclick="clearAllBoxes()">Clear Boxes</button>
+            <button class="btn btn-sm btn-success" onclick="saveDetectionLabels()">💾 Save (Ctrl+S)</button>
+          </div>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="canvas-wrapper" id="canvas-wrapper">
+          <canvas id="detection-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- OCR Workspace (License Plate Transcription Studio) -->
+      <div id="ocr-workspace" class="mode-workspace">
+        <div class="ocr-container">
+          
+          <!-- Image Preview & Filters Area -->
+          <div class="ocr-image-card">
+            <div class="ocr-filter-toolbar">
+              <span class="filter-label">Live Filters:</span>
+              <label>Brightness <input type="range" id="filter-bright" min="50" max="250" value="100" oninput="applyOcrFilters()"></label>
+              <label>Contrast <input type="range" id="filter-contrast" min="50" max="300" value="100" oninput="applyOcrFilters()"></label>
+              <button class="btn btn-xs" id="btn-filter-gray" onclick="toggleOcrFilter('grayscale')">Grayscale</button>
+              <button class="btn btn-xs" id="btn-filter-invert" onclick="toggleOcrFilter('invert')">Invert (Dark/Light)</button>
+              <button class="btn btn-xs btn-link" onclick="resetOcrFilters()">Reset</button>
+            </div>
+
+            <div class="ocr-image-stage">
+              <img id="ocr-plate-img" src="" alt="License Plate Preview">
+            </div>
+          </div>
+
+          <!-- OCR Transcription Input Form -->
+          <div class="ocr-form-card">
+            
+            <!-- Plate Number Input -->
+            <div class="form-row">
+              <label for="plate-number-input" class="form-label">
+                <span>1. Plate Number (เลขและหมวดอักษร)</span>
+                <span class="badge badge-info">e.g. 1กข 8920, 2ฒณ 4512, ขข 1234</span>
+              </label>
+              <div class="input-with-clear">
+                <input type="text" id="plate-number-input" class="input-lg thai-font" placeholder="1กข 8920" autocomplete="off" autofocus>
+                <button class="clear-btn" onclick="clearInput('plate-number-input')">✕</button>
+              </div>
+            </div>
+
+            <!-- Thai Consonants & Digits Virtual Quick-Pad -->
+            <div class="quick-pad-panel">
+              <div class="quick-pad-header">
+                <span class="quick-pad-title">🇹🇭 Thai Consonants & Digits Quick-Pad</span>
+                <button class="btn btn-xs btn-link" onclick="toggleQuickPad()">Toggle Pad</button>
+              </div>
+              <div id="quick-pad-body" class="quick-pad-body">
+                <div class="quick-pad-digits" id="quick-pad-digits"></div>
+                <div class="quick-pad-consonants" id="quick-pad-consonants"></div>
+              </div>
+            </div>
+
+            <!-- Province Input & Autocomplete -->
+            <div class="form-row">
+              <label for="province-input" class="form-label">
+                <span>2. Province (จังหวัด 77 จังหวัด)</span>
+                <span class="badge badge-success">77 Provinces Codified</span>
+              </label>
+              <div class="autocomplete-wrapper">
+                <input type="text" id="province-input" class="input-md thai-font" placeholder="กรุงเทพมหานคร, เชียงใหม่, ชลบุรี..." autocomplete="off">
+                <div id="province-suggestions" class="suggestions-list"></div>
+              </div>
+
+              <!-- Top Provinces Quick Chips -->
+              <div class="top-provinces-chips" id="top-provinces-chips">
+                <!-- Injected via JS -->
+              </div>
+            </div>
+
+            <!-- Plate Category / Quality Selector -->
+            <div class="form-row">
+              <label class="form-label"><span>3. Plate Classification & Category</span></label>
+              <div class="category-grid" id="category-selector">
+                <label class="cat-card active">
+                  <input type="radio" name="ocr-category" value="real_physical" checked>
+                  <span class="cat-title">🚗 Real Physical</span>
+                  <span class="cat-desc">Standard metal plate</span>
+                </label>
+                <label class="cat-card">
+                  <input type="radio" name="ocr-category" value="graphic_auction">
+                  <span class="cat-title">🎨 Auction Graphic</span>
+                  <span class="cat-desc">ป้ายประมูลแท้</span>
+                </label>
+                <label class="cat-card">
+                  <input type="radio" name="ocr-category" value="red_plate">
+                  <span class="cat-title">🔴 Red Plate</span>
+                  <span class="cat-desc">ป้ายแดงชั่วคราว</span>
+                </label>
+                <label class="cat-card">
+                  <input type="radio" name="ocr-category" value="yellow_commercial">
+                  <span class="cat-title">🚕 Commercial Yellow</span>
+                  <span class="cat-desc">แท็กซี่/รถสาธารณะ</span>
+                </label>
+                <label class="cat-card">
+                  <input type="radio" name="ocr-category" value="green_pickup">
+                  <span class="cat-title">🛻 Pickup Green</span>
+                  <span class="cat-desc">รถบรรทุก/กระบะ</span>
+                </label>
+                <label class="cat-card">
+                  <input type="radio" name="ocr-category" value="blue_van">
+                  <span class="cat-title">🚐 Van Blue</span>
+                  <span class="cat-desc">รถตู้โดยสาร</span>
+                </label>
+                <label class="cat-card cat-invalid">
+                  <input type="radio" name="ocr-category" value="blurry_invalid">
+                  <span class="cat-title">⚠️ Blurry / Glitch</span>
+                  <span class="cat-desc">Unreadable crop</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Relabeling Save Options -->
+            <div class="save-settings-bar">
+              <label><input type="checkbox" id="opt-rename" checked> Direct Rename File</label>
+              <label><input type="checkbox" id="opt-manifest" checked> Update metadata.jsonl</label>
+              <label><input type="checkbox" id="opt-move-folder"> Move to Category Folder</label>
+            </div>
+
+            <!-- Submit Button -->
+            <div class="form-submit-row">
+              <button class="btn btn-primary btn-xl" onclick="saveOcrLabels(true)">
+                💾 Save & Next (Enter)
+              </button>
+              <button class="btn btn-secondary btn-xl" onclick="navigateImage(1)">
+                ⏭️ Skip
+              </button>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Right Sidebar: Detection Class Manager & Box List -->
+    <aside class="sidebar-right" id="sidebar-detection">
+      <div class="sidebar-section">
+        <h3>Class Selector</h3>
+        <div class="class-list" id="class-list">
+          <!-- Dynamically populated classes -->
+        </div>
+        <div class="add-class-box">
+          <input type="text" id="new-class-input" placeholder="New class name...">
+          <button class="btn btn-xs btn-secondary" onclick="addClass()">+ Add</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="boxes-header">
+          <h3>Bounding Boxes</h3>
+          <span id="box-count-badge" class="badge">0</span>
+        </div>
+        <div class="boxes-list" id="boxes-list">
+          <div class="empty-hint">Click & drag on image to draw a bounding box.</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section guide-panel">
+        <h4>Keyboard Shortcuts</h4>
+        <ul class="shortcuts-list">
+          <li><kbd>Click + Drag</kbd> Draw box</li>
+          <li><kbd>Del / Backspace</kbd> Delete box</li>
+          <li><kbd>Ctrl + S</kbd> Save boxes</li>
+          <li><kbd>A</kbd> Auto-Detect (YOLO)</li>
+          <li><kbd>← / →</kbd> Prev / Next</li>
+          <li><kbd>Space + Drag</kbd> Pan canvas</li>
+          <li><kbd>Scroll</kbd> Zoom canvas</li>
+        </ul>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

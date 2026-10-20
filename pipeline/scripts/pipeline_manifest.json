@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "project": "Thai License Plate Recognition (ALPR/ANPR)",
+  "version": "2.0.0",
+  "target_runtime": "Python 3.10.x / Windows / NVIDIA CUDA 12.4 / CPU Edge",
+  "pipeline_stages": [
+    {
+      "stage": 0,
+      "name": "Data Acquisition & Harvesting",
+      "submodules": [
+        {
+          "name": "Facebook Full-Res Harvester",
+          "dir": "fb_image_downloader/fb_downloader",
+          "entrypoint": "run.bat",
+          "script": "fb_fullres.py",
+          "output": "downloads/"
+        },
+        {
+          "name": "PlatesMania & Roboflow Crawler",
+          "dir": "lpr-dataset",
+          "entrypoint": "thai_license_plate_fetch.bat",
+          "script": "fetch_thai_plates.py",
+          "output": "thai_license_plate_dataset/"
+        }
+      ]
+    },
+    {
+      "stage": 1,
+      "name": "Quality & Dimension Filtering",
+      "dir": "batch_image_filter_suite",
+      "entrypoint": "run.bat",
+      "script": "main.py",
+      "inputs": ["fb_image_downloader/fb_downloader/downloads", "lpr-dataset/thai_license_plate_dataset"],
+      "outputs": ["passed/", "rejected/"],
+      "features": [
+        "Aspect ratio verification (0.5 to 2.2)",
+        "Minimum dimensions (128x128) & area check",
+        "Transactional checkpoint journal (filter_checkpoint.jsonl)",
+        "Deep raster bitstream verification"
+      ]
+    },
+    {
+      "stage": 2,
+      "name": "VLM Plate Verification & Ad Graphic Sorting",
+      "dir": "license_plate_sorter",
+      "entrypoint": "run.bat",
+      "script": "main.py",
+      "model": "Qwen/Qwen2-VL-2B-Instruct",
+      "inputs": "batch_image_filter_suite/passed",
+      "outputs": [
+        "real_plates/",
+        "ads_and_catalogs/",
+        "graphic_auction_plates/",
+        "non_plates/"
+      ],
+      "ocr_renaming_pattern": "{consonants}_{digits}_{province}.jpg"
+    },
+    {
+      "stage": 3,
+      "name": "Zero-Shot Detection, Character Cropping & Synthetic Augmentation",
+      "dir": "zero_shot_license_plate_detection",
+      "entrypoint": "run_pipeline.bat",
+      "steps": [
+        {
+          "step": "3.1",
+          "name": "Zero-Shot License Plate Detection",
+          "script": "main.py",
+          "models": ["google/owlv2-base-patch16-ensemble", "yolov8s-worldv2.pt"],
+          "output": "cropped/"
+        },
+        {
+          "step": "3.2",
+          "name": "Character & Number Segmentation",
+          "script": "crop_characters.py",
+          "methods": ["Hough deskewing", "CLAHE", "Horizontal projection profiling", "CCA"],
+          "output": "char_bank/"
+        },
+        {
+          "step": "3.3",
+          "name": "Font Analyzer & Typography Atlas",
+          "script": "font_analyzer.py",
+          "output": "font_assets/"
+        },
+        {
+          "step": "3.4",
+          "name": "Synthetic Plate Augmentation (77 Provinces)",
+          "script": "augment_license_plate.py",
+          "output": "augmented_plates/"
+        },
+        {
+          "step": "3.5",
+          "name": "100-Image Batch Dataset Organizer (AA-ZZ)",
+          "script": "organize_crop_folders.py",
+          "output": "organized_crops/"
+        }
+      ]
+    },
+    {
+      "stage": 4,
+      "name": "CPU Edge Inference Runtime",
+      "dir": "01_thai_lpr_cpu_edge",
+      "entrypoint": "run.bat",
+      "script": "main.py",
+      "runtime": "ONNX Runtime / FastAPI / PySide GUI",
+      "target": "Low-latency edge appliance deployment"
+    }
+  ]
+}

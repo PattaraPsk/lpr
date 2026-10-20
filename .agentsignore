@@ -1,0 +1,30 @@
+# Python & virtual environments
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Model weights & inference engines
+*.pt
+*.pth
+*.onnx
+*.engine
+*.bin
+*.xml
+
+# Test media, RTSP dumps, & logs
+*.mp4
+*.avi
+*.mkv
+*.jpg
+*.png
+captures/
+recordings/
+logs/
+*.log
+
+# Build & packaging
+dist/
+build/
+*.zip
+.git/
