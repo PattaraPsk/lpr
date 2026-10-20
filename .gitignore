@@ -1,4 +1,4 @@
-# Python & Caches
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -59,10 +59,6 @@ test_samples/
 captures/
 recordings/
 output/
-filter_checkpoint.jsonl
-browser_session/
-.lpr_session.json
-*/.lpr_session.json
 *.zip
 *.tar
 *.tar.gz
@@ -70,16 +66,8 @@ browser_session/
 *.mp4
 *.avi
 *.mkv
-
-# Training Data Dumps (Generated crops)
-training_ocr/character_bank/char_bank/
-training_ocr/character_bank/organized_crops/
-training_ocr/synthetic_data/augmented_plates/
-training_detection/datasets/*.zip
-
-# Local backups
-README.local.md
-.gitignore.local
+.lpr_session.json
+*/.lpr_session.json
 
 # IDEs & OS
 .idea/

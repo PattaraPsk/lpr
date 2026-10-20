@@ -8,16 +8,12 @@ echo   [1] Launch OWOD Studio GUI (Auto-Labeling and YOLO Pruning)
 echo   [2] Auto-Run OWOD on all data in 'dataset' folder (GPU Batch)
 echo   [3] Launch Thai LPR Dataset Annotator and Reviewer
 echo   [4] Launch ISO-Standard RTSP Stream Collector
-echo   [5] Launch Web-based Plate Relabel GUI
-echo   [6] Run CAM01 Video Detection & Tracking Runner
+echo   [5] Run CAM01 Video Detection & Tracking Runner
 echo ========================================================
-set /p choice="Select tool [1-6] (Default 1): "
-if "%choice%"=="6" (
+set /p choice="Select tool [1-5] (Default 1): "
+if "%choice%"=="5" (
     cd /d "%~dp0.."
     call run_detection.bat
-) else if "%choice%"=="5" (
-    cd /d "%~dp0relabel_gui"
-    python server.py
 ) else if "%choice%"=="4" (
     cd /d "%~dp0rtsp_collector"
     call run.bat

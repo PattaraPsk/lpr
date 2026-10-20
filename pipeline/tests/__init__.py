@@ -1,3 +1,0 @@
-"""
-Thai LPR Test Suite
-"""
