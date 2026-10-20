@@ -189,6 +189,8 @@ class OWODLabelerTab(QWidget):
         h_model = QHBoxLayout()
         self.combo_model = QComboBox()
         self.combo_model.addItems([
+            "RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt (Car Front & Back)",
+            "yolov11x_license_plate.pt (Dedicated License Plate Detector)",
             "yolov8s-worldv2.pt (Fast YOLO-World v2)",
             "yolov8m-worldv2.pt (Balanced YOLO-World v2)",
             "yolov8l-worldv2.pt (High-Accuracy YOLO-World v2)",

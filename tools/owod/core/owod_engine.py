@@ -118,6 +118,23 @@ class OWODDetector:
             if self.vehicle_model is None:
                 self.vehicle_model = self.model
             
+            # 4. Vehicle Front/Back Orientation model (RAER-TNORF)
+            self.orientation_model = None
+            for rf_cand in [
+                Path("RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt"),
+                Path("../RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt"),
+                Path("../../RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt"),
+                Path("rear_front_best.pt"),
+                Path("models/rear_front_best.pt")
+            ]:
+                if rf_cand.exists():
+                    try:
+                        self.orientation_model = YOLO(str(rf_cand.resolve()))
+                        print(f"[OWODDetector] Discovered Car Front/Back Orientation Model: {rf_cand}")
+                        break
+                    except Exception:
+                        pass
+            
             # If YOLO-World, set custom open-world classes
             classes = [c.strip() for c in self.prompt.split(",") if c.strip()]
             if not classes:

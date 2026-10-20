@@ -4,6 +4,7 @@ import cv2
 import torch
 import random
 import yaml
+import shutil
 from pathlib import Path
 from tqdm import tqdm
 from ultralytics import YOLO
@@ -21,12 +22,12 @@ PLATE_CONF = 0.25
 VEHICLE_CONF = 0.25
 IMGSZ = 1280
 
+# Strictly DLT Vehicle Types
 CLASS_NAMES = [
     "car_plate",         # 0: Private passenger cars <= 7 seats (sedan, SUV, hatchback)
     "motorcycle_plate",  # 1: Motorcycles / scooters
     "truck_plate",       # 2: Pickup trucks, flatbeds, heavy commercial trucks
-    "bus_plate",         # 3: Vans (> 7 seats), minibuses, public transit buses
-    "license_plate"      # 4: General license plate fallback
+    "bus_plate"          # 3: Vans (> 7 seats), minibuses, public transit buses
 ]
 
 # COCO vehicle classes: 2=car, 3=motorcycle, 5=bus, 7=truck
@@ -41,9 +42,11 @@ EXCLUDE_DIRS = [
 ]
 
 def setup_directories():
+    if OUTPUT_DIR.exists():
+        shutil.rmtree(OUTPUT_DIR)
     for d in [IMG_TRAIN_DIR, IMG_VAL_DIR, LBL_TRAIN_DIR, LBL_VAL_DIR]:
         d.mkdir(parents=True, exist_ok=True)
-    print(f"Dataset directories ready at {OUTPUT_DIR.resolve()}")
+    print(f"Dataset directory cleaned and recreated at {OUTPUT_DIR.resolve()}")
 
 def is_excluded_path(p: str) -> bool:
     norm_p = os.path.normpath(p).lower()
@@ -66,7 +69,15 @@ def match_plates_to_vehicles(v_boxes, p_boxes, img_shape):
         pw = px2 - px1
         ph = py2 - py1
         p_area = pw * ph
-        if p_area <= 0 or pw < 10 or ph < 6:
+        
+        # Physical plausibility filter for license plate:
+        # Avoid zero/tiny boxes and excessively large boxes (like graphic banners or whole vehicle crops)
+        if pw < 14 or ph < 8:
+            continue
+        if (pw / w) > 0.18 or (ph / h) > 0.15:
+            continue
+        aspect = pw / ph
+        if aspect < 0.7 or aspect > 4.5:
             continue
             
         p_cx = (px1 + px2) / 2.0
@@ -92,24 +103,19 @@ def match_plates_to_vehicles(v_boxes, p_boxes, img_shape):
             
             if is_center_inside or overlap_ratio > 0.35:
                 v_area = (vx2 - vx1) * (vy2 - vy1)
-                # Prioritize smaller vehicle bounding box (e.g. motorcycle in front of bus)
+                # Prioritize smaller vehicle bounding box (e.g. motorcycle in front of truck)
                 score = overlap_ratio * 10.0 + (1.0 / (v_area + 1e-5)) * 10000.0
                 if score > best_score:
                     best_score = score
                     best_v = v_cls
                     
+        # Must be verified against a real vehicle category
         if best_v is not None and best_v in COCO_VEHICLE_MAP:
             matched.append((p_box, COCO_VEHICLE_MAP[best_v], p_conf))
-        elif p_conf >= 0.5:
-            # High confidence plate detected without vehicle context (e.g. vehicle boundary cut off)
-            matched.append((p_box, 4, p_conf))
             
     return matched
 
 def save_sample(img, labels, prefix, index, split):
-    """
-    labels: list of (box_xyxy, class_id, conf)
-    """
     img_name = f"{prefix}_{index:05d}.jpg"
     lbl_name = f"{prefix}_{index:05d}.txt"
     
@@ -196,7 +202,7 @@ def main():
     for v_idx, vpath in enumerate(lpr_vids):
         cap = cv2.VideoCapture(vpath)
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        step = int(max(fps * 0.5, 12)) # Sample twice per second
+        step = int(max(fps * 0.4, 10)) # Sample every 0.4 seconds
         f_idx = 0
         v_base = Path(vpath).stem
         
@@ -236,7 +242,7 @@ def main():
             continue
         cap = cv2.VideoCapture(vpath)
         fps = cap.get(cv2.CAP_PROP_FPS) or 20.0
-        step = int(max(fps * 1.5, 25)) # Sample every 1.5 seconds
+        step = int(max(fps * 1.5, 25))
         f_idx = 0
         v_base = Path(vpath).stem
         

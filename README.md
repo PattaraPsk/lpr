@@ -102,6 +102,15 @@ run.bat
   autorun_owod.bat
   # or: python tools/owod/autorun_dataset.py
   ```
+- **CAM01 / CCTV Video Detection & Auto-Tracking**:
+  ```cmd
+  run_detection.bat
+  # or: python tools/detect_cam_videos.py --input-dir "dataset/Raw Video Record/CAM01"
+  ```
+- **DLT License Plate Dataset Builder**:
+  ```cmd
+  python tools/owod/build_dlt_lpr_dataset.py
+  ```
 
 ---
 
@@ -119,6 +128,7 @@ run.bat
 - **Zero-Shot Auto-Labeling**: Uses YOLO-World v2 models to detect license plates across image and video directories automatically.
 - **YOLO Model Surgery & Pruning**: Inspect model layers, freeze backbone/neck, slice model depth, and apply structured or unstructured weight pruning.
 - **Fine-Tuning**: Trains custom pruned models directly against auto-labeled license plate datasets with live training metrics and curves.
+- **Orientation & Vehicle Context**: Supports Front/Back vehicle orientation models (`best.pt` / `RAER-TNORF`) and COCO vehicle context matching.
 
 ### 3. ISO RTSP Stream Collector (`tools/rtsp_collector/`)
 - **Systematic CCTV & RTSP Ingestion**: Continuous 24/7 stream capture with auto-recovery and exponential backoff.
@@ -128,3 +138,7 @@ run.bat
   - **ISO/IEC 25012**: SHA-256 data integrity hashes and FFprobe container/frame validation.
   - **ISO/IEC 27001**: Credential decoupling via `.env` and automated secret masking in logs and manifests.
   - **ISO/IEC 20547-3**: Staging-to-Bronze Big Data landing zone architecture.
+
+### 4. Video Detection & DLT Dataset Builder (`tools/detect_cam_videos.py` & `tools/owod/build_dlt_lpr_dataset.py`)
+- **Incremental Video Processing**: Deduplicates already-processed CCTV clips using an atomic JSON tracker (`dataset/processed_videos_tracker.json`).
+- **DLT Plate Classification**: Maps COCO vehicles (car, motorcycle, truck, bus) to Thailand DLT plate categories with geometric aspect ratio and plausibility filtering.
