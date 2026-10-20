@@ -179,6 +179,13 @@ class SessionManager:
             
         # Check and load saved session
         session_file = folder / SESSION_FILENAME
+        if not session_file.exists():
+            repo_annotations = Path(__file__).resolve().parent.parent.parent.parent / "annotations"
+            if folder.name.lower() == "plates" and (repo_annotations / "plates_session.json").exists():
+                session_file = repo_annotations / "plates_session.json"
+            elif (repo_annotations / "curated_lpr_session.json").exists():
+                session_file = repo_annotations / "curated_lpr_session.json"
+
         saved_index = 0
         if session_file.exists():
             try:
@@ -226,6 +233,21 @@ class SessionManager:
             with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             temp_file.replace(session_file)
+            
+            # Mirror to annotations for Git version control sync
+            repo_annotations = Path(__file__).resolve().parent.parent.parent.parent / "annotations"
+            if repo_annotations.exists():
+                try:
+                    if self.folder_path.name.lower() == "plates":
+                        m_target = repo_annotations / "plates_session.json"
+                    else:
+                        m_target = repo_annotations / "curated_lpr_session.json"
+                    m_temp = m_target.with_suffix(".tmp")
+                    with open(m_temp, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    m_temp.replace(m_target)
+                except Exception as me:
+                    print(f"Warning: Failed to mirror session: {me}")
         except Exception as e:
             print(f"Error saving session: {e}")
 

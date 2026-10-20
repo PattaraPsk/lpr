@@ -21,6 +21,12 @@ lpr/
 ├── autorun_owod.bat                    # Shortcut: run batch OWOD on dataset/
 ├── STANDARDS.md                        # Enterprise & ISO Standards Compliance Manual
 │
+├── annotations/                        # Version-controlled labeling progress & metadata (ISO 3166-2:TH / ISO 25012)
+│   ├── plates_session.json             # Canonical DataManipulator labeling session (auto-mirrored)
+│   ├── approved_plates.json            # ISO 3166-2:TH normalized approved plate metadata
+│   ├── approved_plates.csv             # Tabular export for quick inspection & training
+│   └── LABELING_PROGRESS.md            # Live labeling audit report and statistics
+│
 ├── tests/                              # Automated test suites (ISO/IEC/IEEE 29119)
 │   └── test_iso_compliance.py          # ISO 3166-2:TH, 8601, 25012, 5259, 27001, 42001 verification
 │
