@@ -11,11 +11,18 @@ lpr/
 ├── .env.example                        # Decoupled environment & RTSP credential template (ISO 27001)
 ├── .gitignore                          # Git ignore rules (datasets, weights, caches)
 ├── AGENTS.md                           # Edge guardrails & engineering non-negotiables
+├── pyproject.toml                      # PEP 517/621 & ISO 19770 software packaging metadata
 ├── README.md                           # Main workspace documentation
+├── requirements.txt                    # Pinned edge runtime dependencies
 ├── run.bat                             # Global interactive launcher for all tools
 ├── run_detection.bat                   # CAM01 / CCTV video detection runner
 ├── run_owod_studio.bat                 # Shortcut: launch OWOD Studio GUI
+├── run_tests.bat                       # Automated ISO compliance test runner (ISO 29119)
 ├── autorun_owod.bat                    # Shortcut: run batch OWOD on dataset/
+├── STANDARDS.md                        # Enterprise & ISO Standards Compliance Manual
+│
+├── tests/                              # Automated test suites (ISO/IEC/IEEE 29119)
+│   └── test_iso_compliance.py          # ISO 3166-2:TH, 8601, 25012, 5259, 27001, 42001 verification
 │
 ├── dataset/                            # Local datasets & raw media (git-ignored)
 │   ├── curated_lpr_dataset/            # Approved Thai LPR dataset images
@@ -97,8 +104,14 @@ run.bat
 - `[3]` Launch **Thai LPR Dataset Annotator & Reviewer** (`DataManipulator`)
 - `[4]` Launch **ISO-Standard RTSP Stream Collector** (`rtsp_collector`)
 - `[5]` Run **CAM01 Video Detection & Auto-Tracking Runner**
+- `[6]` Run **ISO Compliance & Quality Assurance Test Suite** (`run_tests.bat`)
 
 ### Option 2: Direct Tool Launchers
+- **Run ISO Standards Test Suite**:
+  ```cmd
+  run_tests.bat
+  # or: python -m unittest discover tests
+  ```
 - **OWOD Studio GUI**:
   ```cmd
   run_owod_studio.bat
@@ -155,3 +168,20 @@ run.bat
 ### 4. Video Detection & DLT Dataset Builder (`tools/detect_cam_videos.py` & `tools/owod/build_dlt_lpr_dataset.py`)
 - **Incremental Video Processing**: Deduplicates already-processed CCTV clips using an atomic JSON tracker (`dataset/processed_videos_tracker.json`).
 - **DLT Plate Classification**: Maps COCO vehicles (car, motorcycle, truck, bus) to Thailand DLT plate categories with geometric aspect ratio and plausibility filtering.
+- **ISO 5259 Data Quality Reports**: Automatically generates `data_quality_report.json` with class imbalance, box containment, and FIPS SHA-256 verification.
+
+---
+
+## 🏛️ International Standards Compliance
+
+This repository enforces compliance across all data, vision, and streaming components:
+- **ISO 3166-2:TH**: Official codes for all 77 Thai provinces (`TH-10` to `TH-96`) in `tools/DataManipulator/app/provinces.py`.
+- **ISO/IEC 10646 & Unicode 15.0 NFC**: Canonical script normalization across all annotations and string lookups.
+- **ISO 8601**: Standard UTC timestamps and ISO duration representation (`PT...S`).
+- **ISO/IEC 25012**: SHA-256 data integrity hashes and atomic state writes.
+- **ISO/IEC 5259-2:2023**: AI Data Quality auditing for YOLO datasets (`tools/owod/core/quality_auditor.py`).
+- **ISO/IEC 27001**: Credential masking in URLs and user path sanitization.
+- **ISO/IEC 42001**: AI Management System & strict exclusion of binary weights from version control.
+- **ISO/IEC/IEEE 29119**: Automated test suite (`run_tests.bat`).
+
+For full implementation details, see [STANDARDS.md](STANDARDS.md).

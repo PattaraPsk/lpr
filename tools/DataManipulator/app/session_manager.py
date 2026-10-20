@@ -8,6 +8,9 @@ Filename structure: {name}_{plate_type}_{d3}_{d4}_{province}.{ext}
 import os
 import re
 import json
+import unicodedata
+from datetime import datetime, timezone
+from .provinces import normalize_thai_script, get_iso_code
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -113,15 +116,17 @@ class ImageItem:
             self.plate_type = "-"
 
     def to_dict(self) -> Dict[str, Any]:
+        norm_prov = normalize_thai_script(self.province)
         return {
             "filename": self.filename,
             "rel_path": self.rel_path,
             "subfolder": self.subfolder,
             "name": self.name,
             "plate_type": self.plate_type,
-            "d3": self.d3,
-            "d4": self.d4,
-            "province": self.province,
+            "d3": normalize_thai_script(self.d3),
+            "d4": self.d4.strip() if self.d4 else "",
+            "province": norm_prov,
+            "iso_3166_2": get_iso_code(norm_prov),
             "status": self.status
         }
         
@@ -208,14 +213,19 @@ class SessionManager:
         # Store key by rel_path to uniquely identify items across subfolders
         items_dict = {item.rel_path: item.to_dict() for item in self.items}
         data = {
+            "version": "1.1",
+            "standards": ["ISO 8601:2019", "ISO 3166-2:TH", "ISO/IEC 10646", "ISO/IEC 25012:2008"],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "folder": str(self.folder_path),
             "current_index": self.current_index,
             "items": items_dict
         }
         
         try:
-            with open(session_file, "w", encoding="utf-8") as f:
+            temp_file = session_file.with_suffix(".tmp")
+            with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            temp_file.replace(session_file)
         except Exception as e:
             print(f"Error saving session: {e}")
 

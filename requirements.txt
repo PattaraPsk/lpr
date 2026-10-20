@@ -1,0 +1,17 @@
+# Core Vision & AI Inference (Target: Python 3.10.x Edge / Workstation)
+numpy>=1.24.0,<2.3.0
+opencv-python>=4.8.0
+pillow>=10.0.0
+PyYAML>=6.0.0
+tqdm>=4.65.0
+requests>=2.31.0
+
+# Deep Learning & Object Detection
+# For CUDA 12.4 acceleration on Windows:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+torch>=2.0.0
+torchvision>=0.15.0
+ultralytics>=8.2.0
+
+# GUI & Annotation Tools (OWOD Studio & DataManipulator)
+PyQt6>=6.5.0

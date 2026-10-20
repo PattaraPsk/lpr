@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=65.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thai-lpr-edge"
+version = "1.0.0"
+description = "Enterprise Edge-Optimized Thai License Plate Recognition (ALPR/ANPR), OWOD Studio, and ISO-Standardized Stream Processing"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary / Internal"}
+authors = [
+    {name = "Edge AI & Vision Engineering Team"}
+]
+keywords = [
+    "lpr",
+    "anpr",
+    "thai-license-plate",
+    "yolo",
+    "owod",
+    "rtsp",
+    "iso-compliance",
+    "edge-ai"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10"
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "opencv-python>=4.8.0",
+    "pillow>=10.0.0",
+    "PyYAML>=6.0.0",
+    "tqdm>=4.65.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "ultralytics>=8.2.0",
+    "PyQt6>=6.5.0",
+    "requests>=2.31.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tools*"]
+exclude = ["archive*", "dataset*", "runs*"]

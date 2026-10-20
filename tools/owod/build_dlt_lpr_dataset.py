@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import cv2
 import torch
@@ -8,6 +9,15 @@ import shutil
 from pathlib import Path
 from tqdm import tqdm
 from ultralytics import YOLO
+
+# Ensure Windows UTF-8 stdout
+if sys.platform.startswith("win"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
+# Add OWOD root to path for core imports
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from core.quality_auditor import audit_dataset
 
 # Configuration
 OUTPUT_DIR = Path("dataset/yolo_dlt_lpr_dataset")
@@ -321,6 +331,16 @@ def main():
         print(f"  - {name}: {cnt}")
     print(f"Saved to: {OUTPUT_DIR.resolve()}")
     print("============================================================")
+
+    # ISO/IEC 5259 Data Quality Audit & Reporting
+    print("\n[ISO/IEC 5259-2:2023] Executing automated AI Data Quality Audit...")
+    try:
+        quality_report = audit_dataset(OUTPUT_DIR, save_report=True)
+        print(f"[ISO/IEC 5259-2:2023] Data Quality Grade: {quality_report['quality_measures']['quality_grade']}")
+        print(f"[ISO/IEC 5259-2:2023] Syntactic Validity Rate: {quality_report['quality_measures']['syntactic_validity_rate'] * 100:.2f}%")
+        print(f"[ISO/IEC 5259-2:2023] Report persisted to: {OUTPUT_DIR / 'data_quality_report.json'}")
+    except Exception as e:
+        print(f"[ISO/IEC 5259-2:2023] Quality audit warning: {e}")
 
 if __name__ == "__main__":
     main()

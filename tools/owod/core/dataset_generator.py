@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import yaml
 from .owod_engine import Detection
+from .quality_auditor import audit_dataset
 
 def save_image_unicode(path: Union[str, Path], img_bgr: np.ndarray) -> bool:
     try:
@@ -140,3 +141,10 @@ class DatasetGenerator:
         with open(yaml_path, "w", encoding="utf-8") as f:
             yaml.dump(yaml_content, f, default_flow_style=False, sort_keys=False)
         return yaml_path
+
+    def generate_data_quality_report(self) -> dict:
+        """
+        Audits and generates an ISO/IEC 5259-2:2023 & ISO 25012 AI Data Quality Report
+        for the generated dataset, saving data_quality_report.json to output_dir.
+        """
+        return audit_dataset(self.output_dir, save_report=True)
