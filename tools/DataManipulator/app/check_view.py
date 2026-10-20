@@ -1,6 +1,7 @@
 """
 Check / Review Menu Dialog for inspecting and jumping to images (e.g. skipped, pending, approved).
-Supports 9 columns including Subfolder and Plate Type, with Subfolder filtering and Delete feature.
+Supports 9 columns including Subfolder and Plate Type, with Subfolder filtering, AI Difference filter,
+and quick AI prediction replacement.
 """
 
 import re
@@ -37,8 +38,8 @@ class CheckViewDialog(QDialog):
     
     def __init__(self, session: SessionManager, current_idx: int = 0, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Check & Review Image Status")
-        self.resize(1180, 660)
+        self.setWindowTitle("Check & Review Image Status [a1.3.4.1 AI Enabled]")
+        self.resize(1200, 680)
         self.session = session
         self.items = session.items
         self.selected_index = current_idx
@@ -167,6 +168,7 @@ class CheckViewDialog(QDialog):
             ("not_plate", "Not Plate 🚫"),
             ("cannot_read", "Cannot Read ❓"),
             ("dup", "Duplicates (_dup) 🧹"),
+            ("ai_diff", "AI Diff ⚠️"),
         ]
         
         filter_widget = QFrame()
@@ -202,11 +204,17 @@ class CheckViewDialog(QDialog):
         
         # Bottom controls
         bottom_bar = QHBoxLayout()
-        hint_lbl = QLabel("💡 Tip: Double-click or select any row to edit, or delete with 'Delete Image'.")
+        hint_lbl = QLabel("💡 Tip: Double-click or select any row to edit, or use AI replace.")
         hint_lbl.setStyleSheet("color: #9ca3af; font-size: 12px;")
         bottom_bar.addWidget(hint_lbl)
         
         bottom_bar.addStretch()
+        
+        self.btn_replace_ai = QPushButton("⚡ Replace with AI (a1.3.4.1)")
+        self.btn_replace_ai.setStyleSheet("background-color: #059669; color: white; font-weight: bold;")
+        self.btn_replace_ai.setToolTip("Replace d3, d4, and Province of selected image with AI prediction")
+        self.btn_replace_ai.clicked.connect(self._replace_selected_ai)
+        bottom_bar.addWidget(self.btn_replace_ai)
         
         self.btn_delete = QPushButton("🗑️ Delete Image")
         self.btn_delete.setStyleSheet("background-color: #dc2626; color: white; font-weight: bold;")
@@ -245,16 +253,20 @@ class CheckViewDialog(QDialog):
                 elif selected_sf != "(Root)" and item.subfolder != selected_sf:
                     continue
                     
-            # 2. Status / Dup filter
+            # 2. Status / Dup / AI Diff filter
             if self.current_filter == "dup":
                 if not (re.search(r'_dup(\d+)?(_|$|\.)', item.filename, re.IGNORECASE) or "_dup" in item.filename.lower()):
+                    continue
+            elif self.current_filter == "ai_diff":
+                comp = item.get_ai_comparison()
+                if not comp["has_ai"] or comp["all_match"]:
                     continue
             elif self.current_filter != "all" and item.status != self.current_filter:
                 continue
                 
             # 3. Search query
             if search_text:
-                searchable = f"{item.filename} {item.subfolder} {item.name} {item.plate_type} {item.d3} {item.d4} {item.province}".lower()
+                searchable = f"{item.filename} {item.subfolder} {item.name} {item.plate_type} {item.d3} {item.d4} {item.province} {item.ai_d3} {item.ai_d4} {item.ai_province}".lower()
                 if search_text not in searchable:
                     continue
                     
@@ -264,6 +276,7 @@ class CheckViewDialog(QDialog):
         
         for row, idx in enumerate(self._filtered_indices):
             item = self.items[idx]
+            comp = item.get_ai_comparison()
             
             # 0: # (Index 1-based)
             item_num = QTableWidgetItem(str(idx + 1))
@@ -271,8 +284,13 @@ class CheckViewDialog(QDialog):
             item_num.setData(Qt.ItemDataRole.UserRole, idx)
             self.table.setItem(row, 0, item_num)
             
-            # 1: Status Badge
+            # 1: Status Badge + AI match status
             status_text = STATUS_LABELS.get(item.status, item.status.capitalize())
+            if comp["has_ai"]:
+                if comp["all_match"]:
+                    status_text += " [AI ✅]"
+                else:
+                    status_text += " [AI ⚠️]"
             item_status = QTableWidgetItem(status_text)
             item_status.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             fg_color, _ = STATUS_COLORS.get(item.status, ("#9ca3af", "#1f2937"))
@@ -299,15 +317,28 @@ class CheckViewDialog(QDialog):
             # 6: d3
             item_d3 = QTableWidgetItem(item.d3)
             item_d3.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if comp["has_ai"]:
+                item_d3.setToolTip(f"AI Prediction: '{item.ai_d3}' (Match: {comp['d3_match']})")
+                if not comp["d3_match"]:
+                    item_d3.setForeground(QColor("#facc15"))
             self.table.setItem(row, 6, item_d3)
             
             # 7: d4
             item_d4 = QTableWidgetItem(item.d4)
             item_d4.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if comp["has_ai"]:
+                item_d4.setToolTip(f"AI Prediction: '{item.ai_d4}' (Match: {comp['d4_match']})")
+                if not comp["d4_match"]:
+                    item_d4.setForeground(QColor("#facc15"))
             self.table.setItem(row, 7, item_d4)
             
             # 8: Province
-            self.table.setItem(row, 8, QTableWidgetItem(item.province))
+            item_prov = QTableWidgetItem(item.province)
+            if comp["has_ai"]:
+                item_prov.setToolTip(f"AI Prediction: '{item.ai_province}' (Match: {comp['prov_match']})")
+                if not comp["prov_match"]:
+                    item_prov.setForeground(QColor("#facc15"))
+            self.table.setItem(row, 8, item_prov)
             
         self.count_badge.setText(f"Showing {len(self._filtered_indices)} of {len(self.items)} images")
         
@@ -334,6 +365,31 @@ class CheckViewDialog(QDialog):
             self.selected_index = target_idx
             self.image_selected.emit(target_idx)
             self.accept()
+
+    def _replace_selected_ai(self):
+        """Replaces d3, d4, and Province of selected image with AI prediction."""
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+        row = selected_rows[0].row()
+        idx_item = self.table.item(row, 0)
+        if not idx_item:
+            return
+            
+        target_idx = idx_item.data(Qt.ItemDataRole.UserRole)
+        item = self.items[target_idx]
+        if not (item.ai_d3 or item.ai_d4 or item.ai_province):
+            QMessageBox.information(self, "No AI Prediction", "No AI prediction available for this image yet. Run AI Reader first.")
+            return
+            
+        self.session.apply_ai_to_item(target_idx, replace_d3=True, replace_d4=True, replace_prov=True)
+        self._populate_table()
+        QMessageBox.information(
+            self,
+            "Replaced with AI",
+            f"Successfully updated image #{target_idx + 1} with AI values:\n"
+            f"d3: {item.d3}\nd4: {item.d4}\nProvince: {item.province}"
+        )
 
     def _delete_selected(self):
         selected_rows = self.table.selectionModel().selectedRows()

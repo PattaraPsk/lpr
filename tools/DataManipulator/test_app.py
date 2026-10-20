@@ -4,7 +4,9 @@ Unit and Integration tests for Thai LPR Annotator:
 - Single image delete
 - Custom rename
 - Batch removal of '_dup' duplicate images
+- Session persistence
 - GUI instantiation with 9-column Check View
+- AI Reader (a1.3.4.1) inference, comparison, and selective/all replacement
 """
 
 import os
@@ -13,6 +15,12 @@ import shutil
 import tempfile
 from pathlib import Path
 from PIL import Image
+
+try:
+    sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+    sys.stderr.reconfigure(encoding='utf-8', line_buffering=True)
+except Exception:
+    pass
 
 current_dir = Path(__file__).resolve().parent
 if str(current_dir) not in sys.path:
@@ -23,9 +31,11 @@ if str(current_dir.parent) not in sys.path:
 from app.session_manager import SessionManager, ImageItem
 from app.provinces import match_province_value, get_province_entries
 from app.plate_types import get_plate_type_entries, match_plate_type, PLATE_TYPES_DATA
+from app.plate_reader import PlateReader, decode_tokens_to_plate
+
 
 def test_provinces_and_plate_types():
-    print("[1/6] Testing Provinces & Plate Types...")
+    print("[1/7] Testing Provinces & Plate Types...")
     prov_entries = get_province_entries()
     assert len(prov_entries) >= 79
     
@@ -42,8 +52,9 @@ def test_provinces_and_plate_types():
     assert match_plate_type("-") == "-"
     print("  -> Provinces & Plate Types OK")
 
+
 def test_subfolders_and_parsing():
-    print("[2/6] Testing Subfolder Loading & Grouping...")
+    print("[2/7] Testing Subfolder Loading & Grouping...")
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         (tmp_path / "cam1").mkdir()
@@ -86,8 +97,9 @@ def test_subfolders_and_parsing():
         
         print("  -> Subfolders & Grouping OK")
 
+
 def test_delete_and_custom_rename():
-    print("[3/6] Testing Delete & Custom Rename...")
+    print("[3/7] Testing Delete & Custom Rename...")
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         img_file = tmp_path / "car01_WhiteBlackCar_1กก_1234_กรุงเทพมหานคร.jpg"
@@ -111,8 +123,9 @@ def test_delete_and_custom_rename():
         assert not (tmp_path / "custom_car_WhiteBlackCar_9กข_8888_ชลบุรี.jpg").exists()
         print("  -> Delete & Custom Rename OK")
 
+
 def test_remove_dup_images():
-    print("[4/6] Testing Remove _dup Duplicate Images...")
+    print("[4/7] Testing Remove _dup Duplicate Images...")
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         (tmp_path / "normal1_WhiteBlackCar_1กก_1111_กรุงเทพมหานคร.jpg").touch()
@@ -135,8 +148,9 @@ def test_remove_dup_images():
         assert (tmp_path / "normal1_WhiteBlackCar_1กก_1111_กรุงเทพมหานคร.jpg").exists()
         print("  -> Remove _dup Duplicate Images OK")
 
+
 def test_session_persistence():
-    print("[5/6] Testing Session Persistence across Subfolders...")
+    print("[5/7] Testing Session Persistence across Subfolders...")
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         (tmp_path / "sub1").mkdir()
@@ -145,6 +159,7 @@ def test_session_persistence():
         
         session = SessionManager()
         assert session.load_folder(str(tmp_path))
+        session.items[0].set_ai_prediction("1กก", "1111", "กรุงเทพมหานคร", 0.98)
         session.approve_and_save(0, "car", "WhiteGreen", "5มม", "7777", "เชียงใหม่")
         
         # Reload
@@ -155,10 +170,15 @@ def test_session_persistence():
         assert item.plate_type == "WhiteGreen"
         assert item.subfolder == "sub1"
         assert item.rel_path == "sub1/car_WhiteGreen_5มม_7777_เชียงใหม่.jpg"
+        assert item.ai_d3 == "1กก"
+        assert item.ai_d4 == "1111"
+        assert item.ai_province == "กรุงเทพมหานคร"
+        assert item.ai_confidence == 0.98
         print("  -> Session Persistence OK")
 
+
 def test_gui_headless():
-    print("[6/6] Testing GUI components with Subfolders & 9-column Check View...")
+    print("[6/7] Testing GUI components with Subfolders & 9-column Check View...")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PyQt6.QtWidgets import QApplication
     from app.main_window import MainWindow
@@ -171,7 +191,10 @@ def test_gui_headless():
         tmp_path = Path(tmp_dir)
         (tmp_path / "cam1").mkdir()
         for i in range(10):
-            (tmp_path / "cam1" / f"car{i:02d}_WhiteBlackCar_1กก_{1000+i}_กรุงเทพมหานคร.jpg").touch()
+            # Create a small valid mock JPEG image
+            img_file = tmp_path / "cam1" / f"car{i:02d}_WhiteBlackCar_1กก_{1000+i}_กรุงเทพมหานคร.jpg"
+            img = Image.new("RGB", (100, 32), color=(255, 255, 255))
+            img.save(img_file)
             
         sample_dir = str(tmp_path)
         assert window.session.load_folder(sample_dir)
@@ -184,32 +207,142 @@ def test_gui_headless():
         # Check dialog test
         dlg = CheckViewDialog(window.session, 0, window)
         assert dlg.table.columnCount() == 9 # #, Status, Subfolder, Filename, Name, Plate Type, d3, d4, Province
-    assert dlg.table.rowCount() == len(window.session.items)
+        assert dlg.table.rowCount() == len(window.session.items)
     
-    # Test Not Plate fill behavior (does not advance, only fills)
-    window._on_not_plate_clicked()
-    assert window.session.current_index == 0
-    assert window.combo_plate_type.get_plate_type_value() == "+"
-    assert window.txt_d3.text() == "+"
-    assert window.txt_d4.text() == "+"
-    assert window.combo_province.get_province_value() == "+"
-    
-    # Test Cannot Read fill behavior (does not advance, only fills)
-    window._on_cannot_read_clicked()
-    assert window.session.current_index == 0
-    assert window.combo_plate_type.get_plate_type_value() == "-"
-    assert window.txt_d3.text() == "-"
-    assert window.txt_d4.text() == "-"
-    assert window.combo_province.get_province_value() == "-"
-    
+        # Test Not Plate fill behavior (does not advance, only fills)
+        window._on_not_plate_clicked()
+        assert window.session.current_index == 0
+        assert window.combo_plate_type.get_plate_type_value() == "+"
+        assert window.txt_d3.text() == "+"
+        assert window.txt_d4.text() == "+"
+        assert window.combo_province.get_province_value() == "+"
+        
+        # Test Cannot Read fill behavior (does not advance, only fills)
+        window._on_cannot_read_clicked()
+        assert window.session.current_index == 0
+        assert window.combo_plate_type.get_plate_type_value() == "-"
+        assert window.txt_d3.text() == "-"
+        assert window.txt_d4.text() == "-"
+        assert window.combo_province.get_province_value() == "-"
+        
+        window._stop_workers()
+        
     print("  -> GUI Headless Instantiation & Load OK")
 
 
+def test_ai_reader_comparison_and_replace():
+    print("[7/7] Testing AI Reader (a1.3.4.1) Inference, Comparison & Replacement...")
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PyQt6.QtWidgets import QApplication
+    from app.main_window import MainWindow
+
+    # 1. Test PlateReader instance and prediction
+    reader = PlateReader.get_instance()
+    assert reader.model is not None, f"Model should load from {reader.weights_path}"
+    
+    sample_plate = Path("dataset/curated_lpr_dataset/plates/AA15_car_ศส_1009_กรุงเทพมหานคร.jpg")
+    if sample_plate.exists():
+        res = reader.predict(sample_plate)
+        assert res["error"] is None, f"Prediction error: {res['error']}"
+        assert res["d3"] == "ศส", f"Expected 'ศส', got {res['d3']}"
+        assert res["d4"] == "1009", f"Expected '1009', got {res['d4']}"
+        assert res["province"] == "กรุงเทพมหานคร", f"Expected 'กรุงเทพมหานคร', got {res['province']}"
+        print(f"  -> Real image a1.3.4.1 inference OK: {res['full_plate']} (Confidence: {res['confidence']:.2%})")
+    
+    # 2. Test ImageItem comparison helper
+    item = ImageItem(Path("test_WhiteBlackCar_1กข_9999_เชียงใหม่.jpg"))
+    item.set_ai_prediction("1กข", "1234", "เชียงใหม่", 0.95)
+    comp = item.get_ai_comparison()
+    assert comp["has_ai"] is True
+    assert comp["d3_match"] is True
+    assert comp["d4_match"] is False  # 9999 vs 1234
+    assert comp["prov_match"] is True
+    assert comp["all_match"] is False
+    print("  -> AI comparison logic OK")
+    
+    # 3. Test Selective and Bulk Replacement in GUI
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.chk_auto_ai.setChecked(False)  # manual control for test
+    
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        test_img = tmp_path / "car01_WhiteBlackCar_1กก_1111_กรุงเทพมหานคร.jpg"
+        Image.new("RGB", (100, 32), color=(255, 255, 255)).save(test_img)
+        
+        assert window.session.load_folder(str(tmp_path))
+        window._show_item_at(0)
+        
+        # Verify initial values
+        assert window.txt_d3.text() == "1กก"
+        assert window.txt_d4.text() == "1111"
+        assert window.combo_province.get_province_value() == "กรุงเทพมหานคร"
+        
+        # Set mock AI prediction
+        window._latest_ai_d3 = "2ขข"
+        window._latest_ai_d4 = "2222"
+        window._latest_ai_prov = "เชียงใหม่"
+        window._latest_ai_conf = 0.96
+        window._refresh_comparison_view()
+        
+        # A) Test individual replacement of d3
+        window._on_apply_ai_d3()
+        assert window.txt_d3.text() == "2ขข"
+        assert window.txt_d4.text() == "1111"  # unchanged
+        assert window.combo_province.get_province_value() == "กรุงเทพมหานคร"  # unchanged
+        print("  -> Single replace d3 OK")
+        
+        # B) Test individual replacement of d4
+        window._on_apply_ai_d4()
+        assert window.txt_d3.text() == "2ขข"
+        assert window.txt_d4.text() == "2222"
+        assert window.combo_province.get_province_value() == "กรุงเทพมหานคร"
+        print("  -> Single replace d4 OK")
+        
+        # C) Test individual replacement of province
+        window._on_apply_ai_prov()
+        assert window.combo_province.get_province_value() == "เชียงใหม่"
+        print("  -> Single replace province OK")
+        
+        # Reset values
+        window.txt_d3.setText("old_d3")
+        window.txt_d4.setText("old_d4")
+        window.combo_province.set_province_value("ภูเก็ต")
+        
+        # D) Test selective replacement via checkboxes
+        window.chk_sel_d3.setChecked(True)
+        window.chk_sel_d4.setChecked(False)  # do not replace d4
+        window.chk_sel_prov.setChecked(True)
+        window._on_replace_selected_ai()
+        assert window.txt_d3.text() == "2ขข"
+        assert window.txt_d4.text() == "old_d4"  # remained old
+        assert window.combo_province.get_province_value() == "เชียงใหม่"
+        print("  -> Selective replace OK")
+        
+        # E) Test Replace ALL (Ctrl+R)
+        window.txt_d4.setText("old_d4")
+        window._on_replace_all_ai()
+        assert window.txt_d3.text() == "2ขข"
+        assert window.txt_d4.text() == "2222"
+        assert window.combo_province.get_province_value() == "เชียงใหม่"
+        print("  -> Replace ALL (Ctrl+R) OK")
+        
+        window._stop_workers()
+
+    print("  -> AI Reader Comparison & Replacement All Verified OK")
+
+
 if __name__ == "__main__":
-    test_provinces_and_plate_types()
-    test_subfolders_and_parsing()
-    test_delete_and_custom_rename()
-    test_remove_dup_images()
-    test_session_persistence()
-    test_gui_headless()
-    print("\nALL TESTS PASSED!")
+    import traceback
+    try:
+        test_provinces_and_plate_types()
+        test_subfolders_and_parsing()
+        test_delete_and_custom_rename()
+        test_remove_dup_images()
+        test_session_persistence()
+        test_ai_reader_comparison_and_replace()
+        test_gui_headless()
+        print("\nALL 7 TEST SUITES PASSED!")
+    except Exception as e:
+        traceback.print_exc()
+        sys.exit(1)

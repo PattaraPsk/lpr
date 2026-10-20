@@ -1,6 +1,6 @@
 # Thai License Plate (LPR) Annotator & Reviewer GUI
 
-A desktop application designed for inspecting, editing, and verifying Thai license plate dataset images.
+A desktop application designed for inspecting, editing, verifying, and AI-assisted reading of Thai license plate dataset images.
 
 ## Filename Structure
 
@@ -29,42 +29,59 @@ For example:
 10. **Orange / Black** (`OrangeBlack`): Agricultural vehicles, tractors, construction rollers
 - **Special codes**: `+` (Not license plate) and `-` (Cannot read)
 
+---
 
+## Key Features
 
 - **Subfolder Support & Grouping**:
   - Recursively scans all subfolders when opening a folder.
   - **Group Subfolder Dropdown**: Filter and review images folder by folder or view `All Subfolders`.
   - Displays the active subfolder path for each image (`📂 Folder: camera1/batch1`).
   - Session state persists image records by their relative path across subfolders.
+
 - **Interactive Image Viewer**:
   - **Zoom In / Zoom Out**: Mouse wheel or `＋` / `－` buttons.
   - **Drag / Pan**: Click and drag to pan across zoomed-in images.
   - **Fit View** & **1:1** actual size buttons.
+
 - **Plate Annotation Fields**:
   - **`Base Name`**: Editable image prefix/identifier.
   - **`Plate Type`**: Dropdown with visual color preview and badge (`CAR`, `MC`, `VAN`, `TAXI`, etc.).
   - **`d3`**: License plate category characters / letters (e.g. `1กข`, `ขก`).
   - **`d4`**: License plate numbers (e.g. `1234`, `9999`).
   - **`Province`**: Searchable dropdown autocomplete with all 77 Thai provinces plus `+` and `-`.
+
+- **🤖 AI Plate Reader (`a1.3.4.1`) & Live Comparison**:
+  - **Integrated `a1.3.4.1` Model**: Authentic Pure PyTorch OCR architecture (RCNN + BiLSTM + Attention Decoder) loading `models/reader/a1.3.4.1/best_norm_ED.pth`.
+  - **Auto-Read**: Automatically runs background inference when navigating through images (toggleable).
+  - **Live Comparison Grid**: Shows side-by-side comparison between Current values and AI Predicted values for **d3**, **d4**, and **Province** with color-coded diff badges (`Matched ✅`, `Differences ⚠️`).
+  - **Selective & Individual Replacement**:
+    - **Single Field Buttons**: `⬅ d3`, `⬅ d4`, `⬅ Prov` to replace only that field.
+    - **Replace Selected**: Checkboxes next to each field to replace any combination of fields.
+  - **Bulk Replacement**:
+    - **`⚡ Replace All (Ctrl+R)`**: Replaces `d3`, `d4`, and `Province` simultaneously with AI predictions.
+  - **Batch AI Read (`🤖 AI Read All`)**: Runs a1.3.4.1 across all images in the active folder/subfolder with a live progress dialog.
+
 - **Management & Action Buttons**:
   - **Correct / Approve** (`Enter`): Saves and approves the current image. Renames file according to the filled boxes (e.g. `{name}_{plate_type}_{d3}_{d4}_{province}.jpg`, `{name}_+_+_+_+.jpg`, or `{name}_-_-_-_-.jpg`) and advances to the next image.
   - **Not Plate** (`Ctrl+N`): Fills all plate boxes with `+`. Save and advance by clicking **Approve**.
   - **Cannot Read** (`Ctrl+D`): Fills all plate boxes with `-`. Save and advance by clicking **Approve**.
   - **Skip** (`Ctrl+S`): Marks image as skipped for later review.
-
   - **Rename File** (`F2`): Custom manual rename dialog for the entire filename.
   - **Delete Image** (`Delete` / `Ctrl+Delete`): Permanently removes unwanted image from disk with confirmation.
   - **Remove _dup Images** (`🧹 Remove _dup`): Scans and batch removes all images matching `_dup` from disk.
   - **Back / Next** (`Left Arrow` / `Right Arrow`): Navigates through images within current subfolder filter.
+
 - **Status Dashboard**:
   - Shows counters for **Total**, **Left**, **Approved**, **Not Plate**, **Cannot Read**, and a progress bar with percentage.
+
 - **Check Menu**:
   - Click **📋 Check Menu** to open a comprehensive 9-column status table including **Subfolder** and **Plate Type**.
-  - Filter images by: **All**, **Skipped ⚠️**, **Pending ⏳**, **Approved ✅**, **Not Plate 🚫**, **Cannot Read ❓**, and **Duplicates (_dup) 🧹**.
+  - Filter images by: **All**, **Skipped ⚠️**, **Pending ⏳**, **Approved ✅**, **Not Plate 🚫**, **Cannot Read ❓**, **Duplicates (_dup) 🧹**, and **AI Diff ⚠️**.
   - Subfolder dropdown filter inside the check menu.
+  - **Replace Selected with AI** button directly from the table.
   - **Delete Image** button directly from the table.
   - Double-click or select any row and click **Jump to Selected Image** to immediately jump to that image.
-
 
 ---
 
@@ -72,7 +89,7 @@ For example:
 
 ```bash
 # Install dependencies
-pip install PyQt6 Pillow
+pip install PyQt6 Pillow torch torchvision
 
 # Run application
 python main.py

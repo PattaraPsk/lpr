@@ -6,8 +6,8 @@
     "ISO/IEC 25012:2008",
     "ISO/IEC 5259-2:2023"
   ],
-  "export_timestamp_utc": "2026-10-20T04:41:33.085669+00:00",
-  "total_approved": 52,
+  "export_timestamp_utc": "2026-10-20T09:29:12.422623+00:00",
+  "total_approved": 54,
   "approved_plates": [
     {
       "filename": "AA02_car_งน_111_สงขลา.jpg",
@@ -511,6 +511,30 @@
       "d4": "1166",
       "province": "สกลนคร",
       "iso_3166_2": "TH-47",
+      "status": "approved"
+    },
+    {
+      "filename": "AB14_WhiteBlackCar_ฌฒ_1168_กรุงเทพมหานคร.jpg",
+      "rel_path": "AB14_WhiteBlackCar_ฌฒ_1168_กรุงเทพมหานคร.jpg",
+      "subfolder": "",
+      "name": "AB14",
+      "plate_type": "WhiteBlackCar",
+      "d3": "ฌฒ",
+      "d4": "1168",
+      "province": "กรุงเทพมหานคร",
+      "iso_3166_2": "TH-10",
+      "status": "approved"
+    },
+    {
+      "filename": "AB15_WhiteBlackCar_ฆว_116_กรุงเทพมหานคร.jpg",
+      "rel_path": "AB15_WhiteBlackCar_ฆว_116_กรุงเทพมหานคร.jpg",
+      "subfolder": "",
+      "name": "AB15",
+      "plate_type": "WhiteBlackCar",
+      "d3": "ฆว",
+      "d4": "116",
+      "province": "กรุงเทพมหานคร",
+      "iso_3166_2": "TH-10",
       "status": "approved"
     },
     {

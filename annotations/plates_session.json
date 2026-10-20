@@ -7,9 +7,9 @@
     "ISO/IEC 25012:2008",
     "ISO/IEC 5259-2:2023"
   ],
-  "updated_at": "2026-10-20T04:41:32.896731+00:00",
+  "updated_at": "2026-10-20T09:29:12.242788+00:00",
   "folder": "D:\\Projects-anti\\lpr\\dataset\\curated_lpr_dataset\\plates",
-  "current_index": 42,
+  "current_index": 45,
   "items": {
     "AA02_car_งน_111_สงขลา.jpg": {
       "filename": "AA02_car_งน_111_สงขลา.jpg",
@@ -527,29 +527,29 @@
       "iso_3166_2": null,
       "status": "cannot_read"
     },
-    "AB14_car_1กข_0115_กรุงเทพมหานคร.jpg": {
-      "filename": "AB14_car_1กข_0115_กรุงเทพมหานคร.jpg",
-      "rel_path": "AB14_car_1กข_0115_กรุงเทพมหานคร.jpg",
+    "AB14_WhiteBlackCar_ฌฒ_1168_กรุงเทพมหานคร.jpg": {
+      "filename": "AB14_WhiteBlackCar_ฌฒ_1168_กรุงเทพมหานคร.jpg",
+      "rel_path": "AB14_WhiteBlackCar_ฌฒ_1168_กรุงเทพมหานคร.jpg",
       "subfolder": "",
       "name": "AB14",
       "plate_type": "WhiteBlackCar",
-      "d3": "1กข",
-      "d4": "0115",
+      "d3": "ฌฒ",
+      "d4": "1168",
       "province": "กรุงเทพมหานคร",
       "iso_3166_2": "TH-10",
-      "status": "pending"
+      "status": "approved"
     },
-    "AB15_car_คร_0001_กรุงเทพมหานคร.jpg": {
-      "filename": "AB15_car_คร_0001_กรุงเทพมหานคร.jpg",
-      "rel_path": "AB15_car_คร_0001_กรุงเทพมหานคร.jpg",
+    "AB15_WhiteBlackCar_ฆว_116_กรุงเทพมหานคร.jpg": {
+      "filename": "AB15_WhiteBlackCar_ฆว_116_กรุงเทพมหานคร.jpg",
+      "rel_path": "AB15_WhiteBlackCar_ฆว_116_กรุงเทพมหานคร.jpg",
       "subfolder": "",
       "name": "AB15",
       "plate_type": "WhiteBlackCar",
-      "d3": "คร",
-      "d4": "0001",
+      "d3": "ฆว",
+      "d4": "116",
       "province": "กรุงเทพมหานคร",
       "iso_3166_2": "TH-10",
-      "status": "pending"
+      "status": "approved"
     },
     "AB17_car_1กข_0118_กรุงเทพมหานคร.jpg": {
       "filename": "AB17_car_1กข_0118_กรุงเทพมหานคร.jpg",

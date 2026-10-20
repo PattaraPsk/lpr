@@ -44,6 +44,12 @@ class ImageItem:
         self.d4: str = ""
         self.province: str = ""
         
+        # AI Reader (a1.3.4.1) predictions
+        self.ai_d3: str = ""
+        self.ai_d4: str = ""
+        self.ai_province: str = ""
+        self.ai_confidence: float = 0.0
+        
         # Status: "pending", "approved", "not_plate", "cannot_read", "skipped"
         self.status: str = "pending"
         
@@ -115,6 +121,42 @@ class ImageItem:
             self.status = "cannot_read"
             self.plate_type = "-"
 
+    def set_ai_prediction(self, d3: str, d4: str, province: str, confidence: float = 0.0):
+        self.ai_d3 = d3
+        self.ai_d4 = d4
+        self.ai_province = province
+        self.ai_confidence = confidence
+
+    def get_ai_comparison(self) -> Dict[str, Any]:
+        """Compares current manual/file values with AI predictions."""
+        norm_d3 = normalize_thai_script(self.d3).strip()
+        norm_ai_d3 = normalize_thai_script(self.ai_d3).strip()
+        norm_d4 = self.d4.strip()
+        norm_ai_d4 = self.ai_d4.strip()
+        norm_prov = normalize_thai_script(self.province).strip()
+        norm_ai_prov = normalize_thai_script(self.ai_province).strip()
+        
+        has_ai = bool(self.ai_d3 or self.ai_d4 or self.ai_province)
+        d3_match = (norm_d3 == norm_ai_d3) if has_ai else False
+        d4_match = (norm_d4 == norm_ai_d4) if has_ai else False
+        prov_match = (norm_prov == norm_ai_prov) if has_ai else False
+        all_match = (d3_match and d4_match and prov_match) if has_ai else False
+
+        return {
+            "has_ai": has_ai,
+            "d3_match": d3_match,
+            "d4_match": d4_match,
+            "prov_match": prov_match,
+            "all_match": all_match,
+            "curr_d3": norm_d3,
+            "ai_d3": norm_ai_d3,
+            "curr_d4": norm_d4,
+            "ai_d4": norm_ai_d4,
+            "curr_prov": norm_prov,
+            "ai_prov": norm_ai_prov,
+            "confidence": self.ai_confidence
+        }
+
     def to_dict(self) -> Dict[str, Any]:
         norm_prov = normalize_thai_script(self.province)
         return {
@@ -127,7 +169,11 @@ class ImageItem:
             "d4": self.d4.strip() if self.d4 else "",
             "province": norm_prov,
             "iso_3166_2": get_iso_code(norm_prov),
-            "status": self.status
+            "status": self.status,
+            "ai_d3": self.ai_d3,
+            "ai_d4": self.ai_d4,
+            "ai_province": self.ai_province,
+            "ai_confidence": self.ai_confidence,
         }
         
     def from_dict(self, data: Dict[str, Any]):
@@ -142,6 +188,14 @@ class ImageItem:
             self.d4 = data["d4"]
         if "province" in data:
             self.province = data["province"]
+        if "ai_d3" in data:
+            self.ai_d3 = data["ai_d3"]
+        if "ai_d4" in data:
+            self.ai_d4 = data["ai_d4"]
+        if "ai_province" in data:
+            self.ai_province = data["ai_province"]
+        if "ai_confidence" in data:
+            self.ai_confidence = float(data["ai_confidence"])
 
 
 class SessionManager:
@@ -293,6 +347,19 @@ class SessionManager:
             if i < current_idx:
                 return i
         return indices[0] # Stay at first if reached start
+
+    def apply_ai_to_item(self, idx: int, replace_d3: bool = True, replace_d4: bool = True, replace_prov: bool = True) -> bool:
+        """Applies AI predictions to the specified item fields."""
+        if not (0 <= idx < len(self.items)):
+            return False
+        item = self.items[idx]
+        if replace_d3 and item.ai_d3:
+            item.d3 = item.ai_d3
+        if replace_d4 and item.ai_d4:
+            item.d4 = item.ai_d4
+        if replace_prov and item.ai_province:
+            item.province = item.ai_province
+        return True
 
     def get_current_item(self) -> Optional[ImageItem]:
         if 0 <= self.current_index < len(self.items):

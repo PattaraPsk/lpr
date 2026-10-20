@@ -1,16 +1,18 @@
 """
 Main Application Window for Thai License Plate (LPR) Annotation & Review.
-Updated to support subfolders, grouping by subfolder, custom rename,
-single image delete, and batch removing '_dup' duplicate images.
+Updated to support AI Reader (a1.3.4.1) inference, live field comparison (d3, d4, province),
+and selective/bulk replacement of predicted plate elements.
 """
 
 import sys
 from pathlib import Path
+from typing import Optional, Dict, Any, List
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QPushButton, QLineEdit, QFileDialog, QMessageBox,
     QProgressBar, QFrame, QGroupBox, QGridLayout, QComboBox,
-    QInputDialog
+    QInputDialog, QCheckBox, QScrollArea, QProgressDialog
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont, QKeySequence, QIcon, QShortcut
@@ -20,15 +22,27 @@ from .image_viewer import ImageViewerWidget
 from .searchable_combo import SearchableProvinceComboBox
 from .plate_type_combo import PlateTypeComboBox
 from .check_view import CheckViewDialog
+from .provinces import normalize_thai_script
+from .reader_worker import AISingleReaderWorker, AIBatchReaderWorker
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Thai LPR Dataset Annotator & Reviewer")
-        self.resize(1380, 890)
-        self.setMinimumSize(1000, 650)
+        self.setWindowTitle("Thai LPR Dataset Annotator & Reviewer [a1.3.4.1 AI Enabled]")
+        self.resize(1400, 920)
+        self.setMinimumSize(1020, 680)
         
         self.session = SessionManager()
+        
+        # State for active a1.3.4.1 predictions
+        self._active_worker: Optional[AISingleReaderWorker] = None
+        self._batch_worker: Optional[AIBatchReaderWorker] = None
+        self._latest_ai_d3: str = ""
+        self._latest_ai_d4: str = ""
+        self._latest_ai_prov: str = ""
+        self._latest_ai_conf: float = 0.0
+        
         self._init_ui()
         self._setup_shortcuts()
         self._apply_styles()
@@ -45,7 +59,7 @@ class MainWindow(QMainWindow):
         header_bar = self._create_header_bar()
         main_layout.addWidget(header_bar)
         
-        # 2. Central Splitter (Left: Viewer, Right: Edit Panel)
+        # 2. Central Splitter (Left: Viewer, Right: Scrollable Edit Panel)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(8)
         
@@ -53,7 +67,14 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.image_viewer)
         
         self.edit_panel = self._create_edit_panel()
-        splitter.addWidget(self.edit_panel)
+        
+        # Wrap edit panel in scroll area for small display height compatibility
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setWidget(self.edit_panel)
+        splitter.addWidget(scroll_area)
         
         splitter.setStretchFactor(0, 7)
         splitter.setStretchFactor(1, 3)
@@ -95,6 +116,13 @@ class MainWindow(QMainWindow):
         self.btn_clean_dup.clicked.connect(self._on_remove_dup_clicked)
         h_layout.addWidget(self.btn_clean_dup)
         
+        # Batch AI Read Button
+        self.btn_batch_ai = QPushButton("🤖 AI Read All")
+        self.btn_batch_ai.setObjectName("btnAiReadAll")
+        self.btn_batch_ai.setToolTip("Run a1.3.4.1 reader across all images in active subfolder or folder")
+        self.btn_batch_ai.clicked.connect(self._on_batch_ai_clicked)
+        h_layout.addWidget(self.btn_batch_ai)
+        
         h_layout.addStretch()
         
         # Stats Badges
@@ -121,7 +149,7 @@ class MainWindow(QMainWindow):
         # Check Menu Button
         self.btn_check_menu = QPushButton("📋 Check Menu")
         self.btn_check_menu.setObjectName("btnCheckMenu")
-        self.btn_check_menu.setToolTip("Open Review List to inspect skipped/approved images")
+        self.btn_check_menu.setToolTip("Open Review List to inspect skipped/approved images and AI differences")
         self.btn_check_menu.clicked.connect(self._on_open_check_menu)
         h_layout.addWidget(self.btn_check_menu)
         
@@ -138,8 +166,8 @@ class MainWindow(QMainWindow):
     def _create_edit_panel(self) -> QWidget:
         panel = QFrame(self)
         panel.setObjectName("editPanelCard")
-        panel.setMinimumWidth(350)
-        panel.setMaximumWidth(460)
+        panel.setMinimumWidth(380)
+        panel.setMaximumWidth(520)
         
         p_layout = QVBoxLayout(panel)
         p_layout.setContentsMargins(16, 16, 16, 16)
@@ -159,7 +187,15 @@ class MainWindow(QMainWindow):
         self.lbl_current_status.setObjectName("lblStatus")
         p_layout.addWidget(self.lbl_current_status)
         
-        # Group Box: Plate Structure Editor
+        # ---------------------------------------------------------------------
+        # AI Reader (a1.3.4.1) & Comparison Box
+        # ---------------------------------------------------------------------
+        gb_ai = self._create_ai_comparison_box()
+        p_layout.addWidget(gb_ai)
+        
+        # ---------------------------------------------------------------------
+        # Plate Structure Editor
+        # ---------------------------------------------------------------------
         gb_edit = QGroupBox("Plate Information")
         gb_edit.setObjectName("groupBoxEdit")
         grid = QGridLayout(gb_edit)
@@ -190,6 +226,7 @@ class MainWindow(QMainWindow):
         self.txt_d3 = QLineEdit()
         self.txt_d3.setPlaceholderText("e.g. 1กข, ขก, +")
         self.txt_d3.setObjectName("txtPlateField")
+        self.txt_d3.textChanged.connect(self._on_manual_field_changed)
         self.txt_d3.returnPressed.connect(self._on_approve_clicked)
         grid.addWidget(lbl_d3, 2, 0)
         grid.addWidget(self.txt_d3, 2, 1)
@@ -200,6 +237,7 @@ class MainWindow(QMainWindow):
         self.txt_d4 = QLineEdit()
         self.txt_d4.setPlaceholderText("e.g. 1234, 9999, +")
         self.txt_d4.setObjectName("txtPlateField")
+        self.txt_d4.textChanged.connect(self._on_manual_field_changed)
         self.txt_d4.returnPressed.connect(self._on_approve_clicked)
         grid.addWidget(lbl_d4, 3, 0)
         grid.addWidget(self.txt_d4, 3, 1)
@@ -209,6 +247,7 @@ class MainWindow(QMainWindow):
         lbl_province.setStyleSheet("font-weight: bold; color: #60a5fa;")
         self.combo_province = SearchableProvinceComboBox()
         self.combo_province.setObjectName("comboProvince")
+        self.combo_province.currentTextChanged.connect(self._on_manual_field_changed)
         grid.addWidget(lbl_province, 4, 0)
         grid.addWidget(self.combo_province, 4, 1)
         
@@ -254,7 +293,6 @@ class MainWindow(QMainWindow):
         self.btn_cannot_read.setToolTip("Fill all boxes with '-' for Cannot Read. Save by clicking Approve.")
         self.btn_cannot_read.clicked.connect(self._on_cannot_read_clicked)
         p_layout.addWidget(self.btn_cannot_read)
-
         
         # Skip Button
         self.btn_skip = QPushButton("⏭️ Skip (Ctrl+S)")
@@ -287,6 +325,148 @@ class MainWindow(QMainWindow):
         
         return panel
 
+    def _create_ai_comparison_box(self) -> QGroupBox:
+        """Creates the interactive AI Reader (a1.3.4.1) and field comparison widget."""
+        gb_ai = QGroupBox("🤖 AI Reader (a1.3.4.1)")
+        gb_ai.setObjectName("groupBoxAI")
+        ai_layout = QVBoxLayout(gb_ai)
+        ai_layout.setContentsMargins(12, 10, 12, 10)
+        ai_layout.setSpacing(8)
+        
+        # Top AI Controls Bar
+        ai_top = QHBoxLayout()
+        self.chk_auto_ai = QCheckBox("Auto AI Read")
+        self.chk_auto_ai.setChecked(True)
+        self.chk_auto_ai.setToolTip("Automatically run a1.3.4.1 model on each image change")
+        ai_top.addWidget(self.chk_auto_ai)
+        
+        ai_top.addStretch()
+        
+        self.btn_ai_read = QPushButton("⚡ Read Plate")
+        self.btn_ai_read.setObjectName("btnAiRead")
+        self.btn_ai_read.setToolTip("Run a1.3.4.1 inference on current image crop")
+        self.btn_ai_read.clicked.connect(self._on_manual_ai_read_clicked)
+        ai_top.addWidget(self.btn_ai_read)
+        
+        ai_layout.addLayout(ai_top)
+        
+        # Status / Confidence Badge
+        self.lbl_ai_status = QLabel("AI Status: Idle")
+        self.lbl_ai_status.setObjectName("lblAiStatus")
+        self.lbl_ai_status.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 500;")
+        ai_layout.addWidget(self.lbl_ai_status)
+        
+        # Comparison Table: Checkbox | Field | Current | ➜ | AI Predicted | Action
+        comp_grid = QGridLayout()
+        comp_grid.setVerticalSpacing(6)
+        comp_grid.setHorizontalSpacing(6)
+        comp_grid.setContentsMargins(0, 4, 0, 4)
+        
+        hdr_style = "color: #94a3b8; font-size: 11px; font-weight: bold;"
+        lbl_h_sel = QLabel("Sel")
+        lbl_h_sel.setStyleSheet(hdr_style)
+        lbl_h_field = QLabel("Field")
+        lbl_h_field.setStyleSheet(hdr_style)
+        lbl_h_curr = QLabel("Current")
+        lbl_h_curr.setStyleSheet(hdr_style)
+        lbl_h_ai = QLabel("AI (a1.3.4.1)")
+        lbl_h_ai.setStyleSheet(hdr_style)
+        lbl_h_act = QLabel("Action")
+        lbl_h_act.setStyleSheet(hdr_style)
+        
+        comp_grid.addWidget(lbl_h_sel, 0, 0, Qt.AlignmentFlag.AlignCenter)
+        comp_grid.addWidget(lbl_h_field, 0, 1)
+        comp_grid.addWidget(lbl_h_curr, 0, 2)
+        comp_grid.addWidget(lbl_h_ai, 0, 3)
+        comp_grid.addWidget(lbl_h_act, 0, 4, Qt.AlignmentFlag.AlignCenter)
+        
+        # Row 1: d3 (Letters/Prefix)
+        self.chk_sel_d3 = QCheckBox()
+        self.chk_sel_d3.setChecked(True)
+        self.chk_sel_d3.setToolTip("Include d3 in 'Replace Selected'")
+        lbl_f_d3 = QLabel("d3")
+        lbl_f_d3.setStyleSheet("font-weight: bold; color: #60a5fa; font-size: 12px;")
+        self.lbl_comp_curr_d3 = QLabel("-")
+        self.lbl_comp_curr_d3.setStyleSheet("color: #cbd5e1; font-weight: 500;")
+        self.lbl_comp_ai_d3 = QLabel("-")
+        self.lbl_comp_ai_d3.setStyleSheet("color: #38bdf8; font-weight: bold;")
+        self.btn_apply_d3 = QPushButton("⬅ d3")
+        self.btn_apply_d3.setObjectName("btnApplySingle")
+        self.btn_apply_d3.setToolTip("Replace current d3 with AI prediction")
+        self.btn_apply_d3.clicked.connect(self._on_apply_ai_d3)
+        
+        comp_grid.addWidget(self.chk_sel_d3, 1, 0, Qt.AlignmentFlag.AlignCenter)
+        comp_grid.addWidget(lbl_f_d3, 1, 1)
+        comp_grid.addWidget(self.lbl_comp_curr_d3, 1, 2)
+        comp_grid.addWidget(self.lbl_comp_ai_d3, 1, 3)
+        comp_grid.addWidget(self.btn_apply_d3, 1, 4)
+        
+        # Row 2: d4 (Numbers)
+        self.chk_sel_d4 = QCheckBox()
+        self.chk_sel_d4.setChecked(True)
+        self.chk_sel_d4.setToolTip("Include d4 in 'Replace Selected'")
+        lbl_f_d4 = QLabel("d4")
+        lbl_f_d4.setStyleSheet("font-weight: bold; color: #60a5fa; font-size: 12px;")
+        self.lbl_comp_curr_d4 = QLabel("-")
+        self.lbl_comp_curr_d4.setStyleSheet("color: #cbd5e1; font-weight: 500;")
+        self.lbl_comp_ai_d4 = QLabel("-")
+        self.lbl_comp_ai_d4.setStyleSheet("color: #38bdf8; font-weight: bold;")
+        self.btn_apply_d4 = QPushButton("⬅ d4")
+        self.btn_apply_d4.setObjectName("btnApplySingle")
+        self.btn_apply_d4.setToolTip("Replace current d4 with AI prediction")
+        self.btn_apply_d4.clicked.connect(self._on_apply_ai_d4)
+        
+        comp_grid.addWidget(self.chk_sel_d4, 2, 0, Qt.AlignmentFlag.AlignCenter)
+        comp_grid.addWidget(lbl_f_d4, 2, 1)
+        comp_grid.addWidget(self.lbl_comp_curr_d4, 2, 2)
+        comp_grid.addWidget(self.lbl_comp_ai_d4, 2, 3)
+        comp_grid.addWidget(self.btn_apply_d4, 2, 4)
+        
+        # Row 3: province
+        self.chk_sel_prov = QCheckBox()
+        self.chk_sel_prov.setChecked(True)
+        self.chk_sel_prov.setToolTip("Include Province in 'Replace Selected'")
+        lbl_f_prov = QLabel("Prov")
+        lbl_f_prov.setStyleSheet("font-weight: bold; color: #60a5fa; font-size: 12px;")
+        self.lbl_comp_curr_prov = QLabel("-")
+        self.lbl_comp_curr_prov.setStyleSheet("color: #cbd5e1; font-weight: 500;")
+        self.lbl_comp_ai_prov = QLabel("-")
+        self.lbl_comp_ai_prov.setStyleSheet("color: #38bdf8; font-weight: bold;")
+        self.btn_apply_prov = QPushButton("⬅ Prov")
+        self.btn_apply_prov.setObjectName("btnApplySingle")
+        self.btn_apply_prov.setToolTip("Replace current Province with AI prediction")
+        self.btn_apply_prov.clicked.connect(self._on_apply_ai_prov)
+        
+        comp_grid.addWidget(self.chk_sel_prov, 3, 0, Qt.AlignmentFlag.AlignCenter)
+        comp_grid.addWidget(lbl_f_prov, 3, 1)
+        comp_grid.addWidget(self.lbl_comp_curr_prov, 3, 2)
+        comp_grid.addWidget(self.lbl_comp_ai_prov, 3, 3)
+        comp_grid.addWidget(self.btn_apply_prov, 3, 4)
+        
+        comp_grid.setColumnStretch(2, 1)
+        comp_grid.setColumnStretch(3, 1)
+        ai_layout.addLayout(comp_grid)
+        
+        # Replacement Action Buttons
+        ai_action_box = QHBoxLayout()
+        ai_action_box.setSpacing(6)
+        
+        self.btn_replace_selected = QPushButton("🔀 Replace Selected")
+        self.btn_replace_selected.setObjectName("btnReplaceSelected")
+        self.btn_replace_selected.setToolTip("Replace checked fields (d3, d4, and/or Prov) with AI prediction")
+        self.btn_replace_selected.clicked.connect(self._on_replace_selected_ai)
+        ai_action_box.addWidget(self.btn_replace_selected, 1)
+        
+        self.btn_replace_all = QPushButton("⚡ Replace All (Ctrl+R)")
+        self.btn_replace_all.setObjectName("btnReplaceAll")
+        self.btn_replace_all.setToolTip("Replace all fields (d3 + d4 + Prov) with AI prediction (Ctrl+R)")
+        self.btn_replace_all.clicked.connect(self._on_replace_all_ai)
+        ai_action_box.addWidget(self.btn_replace_all, 1)
+        
+        ai_layout.addLayout(ai_action_box)
+        
+        return gb_ai
+
     def _create_bottom_bar(self) -> QWidget:
         bar = QWidget(self)
         b_layout = QHBoxLayout(bar)
@@ -311,6 +491,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Right"), self, self._on_next_clicked)
         QShortcut(QKeySequence("Ctrl+Left"), self, self._on_back_clicked)
         QShortcut(QKeySequence("Ctrl+Right"), self, self._on_next_clicked)
+        QShortcut(QKeySequence("Ctrl+R"), self, self._on_replace_all_ai)
         QShortcut(QKeySequence("Ctrl+N"), self, self._on_not_plate_clicked)
         QShortcut(QKeySequence("Ctrl+D"), self, self._on_cannot_read_clicked)
         QShortcut(QKeySequence("Ctrl+S"), self, self._on_skip_clicked)
@@ -380,7 +561,11 @@ class MainWindow(QMainWindow):
         # Load image into viewer
         self.image_viewer.load_image(str(item.path))
         
-        # Update Form Fields
+        # Update Form Fields (block signals temporarily to prevent loop)
+        self.txt_d3.blockSignals(True)
+        self.txt_d4.blockSignals(True)
+        self.combo_province.blockSignals(True)
+        
         sf_display = item.subfolder if item.subfolder else "(Root Folder)"
         self.lbl_current_subfolder.setText(f"📂 Folder: {sf_display}")
         self.lbl_current_filename.setText(item.filename)
@@ -390,15 +575,302 @@ class MainWindow(QMainWindow):
         self.txt_d4.setText(item.d4)
         self.combo_province.set_province_value(item.province)
         
+        self.txt_d3.blockSignals(False)
+        self.txt_d4.blockSignals(False)
+        self.combo_province.blockSignals(False)
+        
         # Update Status Badge
         self._update_status_display(item)
         
         # Update Stats & Progress
         self._update_ui_state()
         
+        # Run or refresh AI prediction and comparison
+        self._update_ai_prediction_for_item(item)
+        
         # Focus d3 for quick editing
         self.txt_d3.setFocus()
         self.txt_d3.selectAll()
+
+    # -------------------------------------------------------------------------
+    # AI Reader (a1.3.4.1) Execution & Live Comparison
+    # -------------------------------------------------------------------------
+
+    def _update_ai_prediction_for_item(self, item: ImageItem):
+        """Checks for existing AI prediction or triggers a1.3.4.1 inference."""
+        if item.ai_d3 or item.ai_d4 or item.ai_province:
+            # Use cached prediction on item
+            self._latest_ai_d3 = item.ai_d3
+            self._latest_ai_d4 = item.ai_d4
+            self._latest_ai_prov = item.ai_province
+            self._latest_ai_conf = item.ai_confidence
+            self._refresh_comparison_view()
+        elif self.chk_auto_ai.isChecked():
+            # Trigger background prediction
+            self._run_single_ai_read(item)
+        else:
+            # Auto-read is disabled and no cached result
+            self._latest_ai_d3 = ""
+            self._latest_ai_d4 = ""
+            self._latest_ai_prov = ""
+            self._latest_ai_conf = 0.0
+            self.lbl_ai_status.setText("AI Status: Idle. Click 'Read Plate' to infer.")
+            self.lbl_ai_status.setStyleSheet("color: #94a3b8; font-size: 11px;")
+            self._refresh_comparison_view()
+
+    def _run_single_ai_read(self, item: ImageItem):
+        """Spawns an asynchronous worker to predict the current image."""
+        if self._active_worker and self._active_worker.isRunning():
+            self._active_worker.cancel()
+            self._active_worker.wait(300)
+            
+        self.lbl_ai_status.setText("AI Status: Running a1.3.4.1 inference...")
+        self.lbl_ai_status.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: bold;")
+        self.lbl_comp_ai_d3.setText("...")
+        self.lbl_comp_ai_d4.setText("...")
+        self.lbl_comp_ai_prov.setText("...")
+        
+        self._active_worker = AISingleReaderWorker(str(item.path), self)
+        
+        def on_pred(path_str, res):
+            curr_item = self.session.get_current_item()
+            if curr_item and str(curr_item.path) == path_str:
+                if res.get("error"):
+                    self.lbl_ai_status.setText(f"AI Error: {res['error']}")
+                    self.lbl_ai_status.setStyleSheet("color: #ef4444; font-size: 11px;")
+                    self._latest_ai_d3 = ""
+                    self._latest_ai_d4 = ""
+                    self._latest_ai_prov = ""
+                    self._latest_ai_conf = 0.0
+                else:
+                    curr_item.set_ai_prediction(
+                        res["d3"], res["d4"], res["province"], res["confidence"]
+                    )
+                    self._latest_ai_d3 = res["d3"]
+                    self._latest_ai_d4 = res["d4"]
+                    self._latest_ai_prov = res["province"]
+                    self._latest_ai_conf = res["confidence"]
+                    
+                self._refresh_comparison_view()
+                
+        self._active_worker.prediction_ready.connect(on_pred)
+        self._active_worker.start()
+
+    def _on_manual_ai_read_clicked(self):
+        item = self.session.get_current_item()
+        if not item:
+            return
+        self._run_single_ai_read(item)
+
+    def _on_manual_field_changed(self):
+        """Called whenever user manually edits d3, d4, or province in the form."""
+        self._refresh_comparison_view()
+
+    def _refresh_comparison_view(self):
+        """Updates the Live Comparison labels, diff badges, and button states."""
+        curr_d3 = self.txt_d3.text().strip()
+        curr_d4 = self.txt_d4.text().strip()
+        curr_prov = self.combo_province.get_province_value().strip()
+        
+        ai_d3 = self._latest_ai_d3.strip()
+        ai_d4 = self._latest_ai_d4.strip()
+        ai_prov = self._latest_ai_prov.strip()
+        
+        self.lbl_comp_curr_d3.setText(curr_d3 if curr_d3 else "(empty)")
+        self.lbl_comp_curr_d4.setText(curr_d4 if curr_d4 else "(empty)")
+        self.lbl_comp_curr_prov.setText(curr_prov if curr_prov else "(empty)")
+        
+        self.lbl_comp_ai_d3.setText(ai_d3 if ai_d3 else "-")
+        self.lbl_comp_ai_d4.setText(ai_d4 if ai_d4 else "-")
+        self.lbl_comp_ai_prov.setText(ai_prov if ai_prov else "-")
+        
+        has_ai = bool(ai_d3 or ai_d4 or ai_prov)
+        
+        if has_ai:
+            # 1. d3 Match Check
+            d3_match = (normalize_thai_script(curr_d3) == normalize_thai_script(ai_d3))
+            if d3_match:
+                self.lbl_comp_ai_d3.setStyleSheet("color: #4ade80; font-weight: bold;")
+                self.btn_apply_d3.setEnabled(False)
+            else:
+                self.lbl_comp_ai_d3.setStyleSheet("color: #facc15; font-weight: bold;")
+                self.btn_apply_d3.setEnabled(True)
+                
+            # 2. d4 Match Check
+            d4_match = (curr_d4 == ai_d4)
+            if d4_match:
+                self.lbl_comp_ai_d4.setStyleSheet("color: #4ade80; font-weight: bold;")
+                self.btn_apply_d4.setEnabled(False)
+            else:
+                self.lbl_comp_ai_d4.setStyleSheet("color: #facc15; font-weight: bold;")
+                self.btn_apply_d4.setEnabled(True)
+                
+            # 3. Province Match Check
+            prov_match = (normalize_thai_script(curr_prov) == normalize_thai_script(ai_prov))
+            if prov_match:
+                self.lbl_comp_ai_prov.setStyleSheet("color: #4ade80; font-weight: bold;")
+                self.btn_apply_prov.setEnabled(False)
+            else:
+                self.lbl_comp_ai_prov.setStyleSheet("color: #facc15; font-weight: bold;")
+                self.btn_apply_prov.setEnabled(True)
+                
+            # Overall Status & Action buttons
+            all_match = (d3_match and d4_match and prov_match)
+            if all_match:
+                self.lbl_ai_status.setText(f"AI Status: All Values Matched ✅ (Confidence: {self._latest_ai_conf:.1%})")
+                self.lbl_ai_status.setStyleSheet("color: #4ade80; font-weight: bold; font-size: 11px;")
+                self.btn_replace_all.setEnabled(False)
+            else:
+                diffs = []
+                if not d3_match: diffs.append("d3")
+                if not d4_match: diffs.append("d4")
+                if not prov_match: diffs.append("Province")
+                self.lbl_ai_status.setText(f"AI Status: Differences in [{', '.join(diffs)}] ⚠️ (Confidence: {self._latest_ai_conf:.1%})")
+                self.lbl_ai_status.setStyleSheet("color: #facc15; font-weight: bold; font-size: 11px;")
+                self.btn_replace_all.setEnabled(True)
+                
+            self.btn_replace_selected.setEnabled(not all_match)
+        else:
+            self.lbl_comp_ai_d3.setStyleSheet("color: #94a3b8;")
+            self.lbl_comp_ai_d4.setStyleSheet("color: #94a3b8;")
+            self.lbl_comp_ai_prov.setStyleSheet("color: #94a3b8;")
+            self.btn_apply_d3.setEnabled(False)
+            self.btn_apply_d4.setEnabled(False)
+            self.btn_apply_prov.setEnabled(False)
+            self.btn_replace_selected.setEnabled(False)
+            self.btn_replace_all.setEnabled(False)
+
+    # -------------------------------------------------------------------------
+    # Replacement Handlers (Individual and Bulk)
+    # -------------------------------------------------------------------------
+
+    def _on_apply_ai_d3(self):
+        """Replaces only d3 with the predicted value."""
+        if not self._latest_ai_d3:
+            return
+        self.txt_d3.setText(self._latest_ai_d3)
+        self.lbl_status_msg.setText(f"Replaced d3 with AI: '{self._latest_ai_d3}'")
+        self._refresh_comparison_view()
+
+    def _on_apply_ai_d4(self):
+        """Replaces only d4 with the predicted value."""
+        if not self._latest_ai_d4:
+            return
+        self.txt_d4.setText(self._latest_ai_d4)
+        self.lbl_status_msg.setText(f"Replaced d4 with AI: '{self._latest_ai_d4}'")
+        self._refresh_comparison_view()
+
+    def _on_apply_ai_prov(self):
+        """Replaces only Province with the predicted value."""
+        if not self._latest_ai_prov:
+            return
+        self.combo_province.set_province_value(self._latest_ai_prov)
+        self.lbl_status_msg.setText(f"Replaced Province with AI: '{self._latest_ai_prov}'")
+        self._refresh_comparison_view()
+
+    def _on_replace_selected_ai(self):
+        """Replaces whichever fields have their checkboxes checked."""
+        replaced = []
+        if self.chk_sel_d3.isChecked() and self._latest_ai_d3:
+            self.txt_d3.setText(self._latest_ai_d3)
+            replaced.append("d3")
+        if self.chk_sel_d4.isChecked() and self._latest_ai_d4:
+            self.txt_d4.setText(self._latest_ai_d4)
+            replaced.append("d4")
+        if self.chk_sel_prov.isChecked() and self._latest_ai_prov:
+            self.combo_province.set_province_value(self._latest_ai_prov)
+            replaced.append("Province")
+            
+        if replaced:
+            self.lbl_status_msg.setText(f"Replaced selected fields ({', '.join(replaced)}) with AI prediction.")
+        else:
+            self.lbl_status_msg.setText("No checked fields or AI predictions available to replace.")
+        self._refresh_comparison_view()
+
+    def _on_replace_all_ai(self):
+        """Replaces d3, d4, and Province with AI prediction (Ctrl+R)."""
+        if not (self._latest_ai_d3 or self._latest_ai_d4 or self._latest_ai_prov):
+            self.lbl_status_msg.setText("No AI prediction available to replace.")
+            return
+            
+        if self._latest_ai_d3:
+            self.txt_d3.setText(self._latest_ai_d3)
+        if self._latest_ai_d4:
+            self.txt_d4.setText(self._latest_ai_d4)
+        if self._latest_ai_prov:
+            self.combo_province.set_province_value(self._latest_ai_prov)
+            
+        full = f"{self._latest_ai_d3} {self._latest_ai_d4} {self._latest_ai_prov}".strip()
+        self.lbl_status_msg.setText(f"Replaced ALL fields with AI prediction: {full}")
+        self._refresh_comparison_view()
+
+    def _on_batch_ai_clicked(self):
+        """Runs a1.3.4.1 reader across all images in active subfolder or folder."""
+        if not self.session.items:
+            QMessageBox.information(self, "No Images", "Please open an images folder first.")
+            return
+            
+        active_sf = self.session.active_subfolder
+        indices = self.session.get_filtered_indices(active_sf)
+        if not indices:
+            QMessageBox.information(self, "No Images", "No images found in current filter.")
+            return
+            
+        reply = QMessageBox.question(
+            self,
+            "Run Batch AI Reader",
+            f"Run a1.3.4.1 AI Reader on {len(indices)} image(s) in "
+            f"{'All Subfolders' if not active_sf or active_sf == '(All)' else active_sf}?\n\n"
+            f"Predictions will be stored for instant review and comparison.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+            
+        items_to_read = [(idx, str(self.session.items[idx].path)) for idx in indices]
+        
+        dlg = QProgressDialog("Initializing AI Reader (a1.3.4.1)...", "Cancel", 0, len(items_to_read), self)
+        dlg.setWindowTitle("Batch AI Reader (a1.3.4.1)")
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.resize(450, 130)
+        dlg.show()
+        
+        self._batch_worker = AIBatchReaderWorker(items_to_read, self)
+        
+        def on_batch_progress(done, total, fname):
+            dlg.setValue(done)
+            dlg.setLabelText(f"Reading {done}/{total}: {fname}")
+            
+        def on_batch_item_predicted(idx, res):
+            if not res.get("error"):
+                self.session.items[idx].set_ai_prediction(
+                    res["d3"], res["d4"], res["province"], res["confidence"]
+                )
+                if idx == self.session.current_index:
+                    self._update_ai_prediction_for_item(self.session.items[idx])
+                    
+        def on_batch_finished(completed):
+            dlg.close()
+            self._update_ui_state()
+            self._show_item_at(self.session.current_index)
+            QMessageBox.information(
+                self,
+                "Batch AI Reader Complete",
+                f"Successfully inferred a1.3.4.1 reader on {completed} image(s)!\n\n"
+                f"Use 'Check Menu' or navigate to review and approve predictions."
+            )
+            
+        dlg.canceled.connect(self._batch_worker.cancel)
+        self._batch_worker.progress.connect(on_batch_progress)
+        self._batch_worker.item_predicted.connect(on_batch_item_predicted)
+        self._batch_worker.batch_finished.connect(on_batch_finished)
+        self._batch_worker.start()
+
+    # -------------------------------------------------------------------------
+    # Core Lifecycle & Save Actions
+    # -------------------------------------------------------------------------
 
     def _update_status_display(self, item: ImageItem):
         status_map = {
@@ -481,7 +953,6 @@ class MainWindow(QMainWindow):
         self.txt_d4.setText("-")
         self.combo_province.set_province_value("-")
         self.lbl_status_msg.setText("Filled boxes with '-' (Cannot Read). Click Approve (Enter) to save.")
-
 
     def _on_skip_clicked(self):
         if not self.session.items:
@@ -600,7 +1071,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error Opening OWOD Studio", str(e))
 
+    def _stop_workers(self):
+        """Stops and waits for background workers safely."""
+        if self._active_worker and self._active_worker.isRunning():
+            self._active_worker.cancel()
+            self._active_worker.wait(2000)
+        if self._batch_worker and self._batch_worker.isRunning():
+            self._batch_worker.cancel()
+            self._batch_worker.wait(2000)
+
     def closeEvent(self, event):
+        self._stop_workers()
         self.session.save_session()
         event.accept()
 
@@ -627,6 +1108,22 @@ class MainWindow(QMainWindow):
             #lblFolderPath {
                 font-size: 12px;
                 color: #a0a0b8;
+            }
+            #groupBoxAI {
+                font-size: 13px;
+                font-weight: bold;
+                color: #ffffff;
+                border: 1px solid #3b3b55;
+                background-color: #1f1f2c;
+                border-radius: 6px;
+                margin-top: 4px;
+                padding-top: 10px;
+            }
+            #groupBoxAI::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+                color: #a78bfa;
             }
             #groupBoxEdit {
                 font-size: 13px;
@@ -687,6 +1184,58 @@ class MainWindow(QMainWindow):
             }
             #btnCleanDup:hover {
                 background-color: #9a3412;
+            }
+            #btnAiReadAll {
+                background-color: #4338ca;
+                border-color: #6366f1;
+            }
+            #btnAiReadAll:hover {
+                background-color: #4f46e5;
+            }
+            #btnAiRead {
+                background-color: #4f46e5;
+                border-color: #6366f1;
+                font-size: 11px;
+                padding: 4px 8px;
+            }
+            #btnAiRead:hover {
+                background-color: #4338ca;
+            }
+            #btnApplySingle {
+                background-color: #1e293b;
+                border: 1px solid #475569;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 3px 6px;
+                color: #38bdf8;
+            }
+            #btnApplySingle:hover {
+                background-color: #334155;
+                border-color: #38bdf8;
+            }
+            #btnApplySingle:disabled {
+                background-color: #1a1a24;
+                border-color: #2a2a36;
+                color: #555566;
+            }
+            #btnReplaceSelected {
+                background-color: #0284c7;
+                border-color: #0ea5e9;
+                font-size: 12px;
+                padding: 6px 10px;
+            }
+            #btnReplaceSelected:hover {
+                background-color: #0369a1;
+            }
+            #btnReplaceAll {
+                background-color: #059669;
+                border-color: #10b981;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 6px 10px;
+            }
+            #btnReplaceAll:hover {
+                background-color: #047857;
             }
             #btnCheckMenu {
                 background-color: #0d9488;
@@ -750,56 +1299,73 @@ class MainWindow(QMainWindow):
                 padding: 6px 12px;
             }
             #badgeNeutral {
-                background-color: #282838;
-                color: #e5e7eb;
+                background-color: #282836;
+                color: #e0e0e0;
+                padding: 5px 10px;
                 border-radius: 4px;
-                padding: 4px 8px;
                 font-weight: bold;
                 font-size: 12px;
             }
             #badgeWarning {
                 background-color: #78350f;
-                color: #fef3c7;
+                color: #fde047;
+                padding: 5px 10px;
                 border-radius: 4px;
-                padding: 4px 8px;
                 font-weight: bold;
                 font-size: 12px;
             }
             #badgeSuccess {
                 background-color: #14532d;
-                color: #dcfce7;
+                color: #4ade80;
+                padding: 5px 10px;
                 border-radius: 4px;
-                padding: 4px 8px;
                 font-weight: bold;
                 font-size: 12px;
             }
             #badgeBlue {
                 background-color: #1e3a8a;
-                color: #dbeafe;
+                color: #93c5fd;
+                padding: 5px 10px;
                 border-radius: 4px;
-                padding: 4px 8px;
                 font-weight: bold;
                 font-size: 12px;
             }
             #badgeDanger {
                 background-color: #7f1d1d;
-                color: #fee2e2;
+                color: #fca5a5;
+                padding: 5px 10px;
                 border-radius: 4px;
-                padding: 4px 8px;
                 font-weight: bold;
                 font-size: 12px;
             }
             #appProgressBar {
-                background-color: #22222d;
-                border: 1px solid #363647;
-                border-radius: 6px;
+                background-color: #262634;
+                border: 1px solid #3b3b4f;
+                border-radius: 4px;
                 text-align: center;
                 color: #ffffff;
                 font-weight: bold;
-                height: 18px;
+                font-size: 11px;
+                min-height: 18px;
             }
             #appProgressBar::chunk {
-                background-color: #4f46e5;
-                border-radius: 5px;
+                background-color: #10b981;
+                border-radius: 3px;
+            }
+            QCheckBox {
+                color: #e2e8f0;
+                font-size: 12px;
+                spacing: 5px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 1px solid #4b5563;
+                background-color: #1e293b;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #3b82f6;
+                border-color: #60a5fa;
             }
         """)
