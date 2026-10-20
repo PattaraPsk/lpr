@@ -165,6 +165,11 @@ def cmd_record(args: argparse.Namespace) -> int:
         cfg["stream"]["camera_id"] = args.camera
     if args.channel:
         cfg["stream"]["channel_id"] = args.channel
+    if hasattr(args, "max_retries") and args.max_retries is not None:
+        cfg["resilience"]["max_reconnect_attempts"] = int(args.max_retries)
+    elif getattr(args, "until_offline", False):
+        if cfg.get("resilience", {}).get("max_reconnect_attempts", -1) == -1:
+            cfg["resilience"]["max_reconnect_attempts"] = 3
 
     log_dir = Path(cfg["storage"]["base_dir"]) / ".logs"
     setup_logger(log_dir)
@@ -195,6 +200,12 @@ def cmd_record(args: argparse.Namespace) -> int:
     print(f" Camera/Channel  : {engine.camera_id} / CH{engine.channel_id}")
     print(f" Segment Length  : {engine.segment_duration} seconds ({engine.segment_duration / 60:.1f} min)")
     print(f" Storage Landing : {engine.base_storage_dir}")
+    max_retries_val = cfg.get("resilience", {}).get("max_reconnect_attempts", -1)
+    if max_retries_val >= 0:
+        offline_policy = f"Stop when offline (max {max_retries_val} reconnect attempts)"
+    else:
+        offline_policy = "Infinite retry on network drop"
+    print(f" Offline Policy  : {offline_policy}")
     if target_dt_info:
         print(f" Scheduled Until : {target_dt_info} ({total_dur / 60:.1f} min remaining)")
     else:
@@ -302,6 +313,8 @@ def main():
     rec_parser.add_argument("--segment", "-s", type=int, default=None, help="Segment length in seconds")
     rec_parser.add_argument("--camera", type=str, default=None, help="Override camera ID (e.g. CAM01)")
     rec_parser.add_argument("--channel", type=str, default=None, help="Override channel ID (e.g. 101)")
+    rec_parser.add_argument("--max-retries", "-r", type=int, default=None, help="Maximum reconnect attempts before stopping when camera offline")
+    rec_parser.add_argument("--until-offline", action="store_true", help="Stop data pull when camera goes offline (default 3 retries)")
 
     # Verify command
     subparsers.add_parser("verify", help="Audit dataset against manifest and verify SHA-256 hashes")

@@ -362,7 +362,7 @@ class StreamIngestionEngine:
                 )
                 
                 if 0 <= self.max_retries < retry_count:
-                    logger.error(f"Maximum retry limit ({self.max_retries}) exceeded. Terminating.")
+                    logger.error(f"Camera offline: Maximum retry limit ({self.max_retries}) reached without stream recovery. Concluding ingestion.")
                     break
 
                 time.sleep(current_delay)

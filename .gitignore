@@ -46,6 +46,9 @@ logs/
 *.torchscript
 RAER-TNORF*/
 REAR-FRONT*/
+model/
+models/**/train*/
+models/**/weights/
 
 # Datasets, Raw Media & Large Archives
 dataset/

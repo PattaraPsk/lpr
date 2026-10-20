@@ -8,9 +8,15 @@ rf_model_path = Path("RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/be
 plate_model_path = Path("yolov11x_license_plate.pt")
 
 if not rf_model_path.exists():
-    for alt in [Path("rear_front_best.pt"), Path("models/rear_front_best.pt")]:
+    for alt in [Path("rear_front_best.pt"), Path("models/rear_front_best.pt"), Path("models/detector/front_rear_lpr_yolov11n.pt")]:
         if alt.exists():
             rf_model_path = alt
+            break
+
+if not plate_model_path.exists():
+    for alt_p in [Path("models/detector/front_rear_lpr_yolov11n.pt"), Path("rear_front_best.pt"), Path("yolov8s-worldv2.pt")]:
+        if alt_p.exists():
+            plate_model_path = alt_p
             break
 
 if not rf_model_path.exists() or not plate_model_path.exists():

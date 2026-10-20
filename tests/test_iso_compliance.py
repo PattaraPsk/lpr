@@ -180,6 +180,14 @@ class TestAIModelGovernance(unittest.TestCase):
         self.assertIn("*.onnx", content, ".gitignore must exclude *.onnx weights")
         self.assertIn("*.engine", content, ".gitignore must exclude *.engine weights")
 
+    def test_model_catalog_exists(self):
+        catalog_path = PROJECT_ROOT / "models" / "MODEL_CATALOG.md"
+        self.assertTrue(catalog_path.is_file(), "models/MODEL_CATALOG.md must exist")
+        content = catalog_path.read_text(encoding="utf-8")
+        self.assertIn("ISO/IEC 42001", content)
+        self.assertIn("front-rear-lpr-yolov11n", content)
+        self.assertIn("thai-lpr-reader-a1.3.4.1", content)
+
 
 if __name__ == "__main__":
     unittest.main()
