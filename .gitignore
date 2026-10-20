@@ -1,4 +1,4 @@
-# Python
+# Python & Caches
 __pycache__/
 *.py[cod]
 *$py.class
@@ -7,6 +7,7 @@ __pycache__/
 env/
 venv/
 ENV/
+.venv/
 build/
 develop-eggs/
 dist/
@@ -21,6 +22,8 @@ var/
 wheels/
 *.egg-info/
 .installed.cfg
+.pytest_cache/
+
 # Secrets & Environment (ISO/IEC 27001)
 .env
 .env.*
@@ -32,31 +35,57 @@ wheels/
 logs/
 *.log
 
-# Local datasets & cache
-curated_lpr_dataset/
-.lpr_session.json
-*/.lpr_session.json
-*.zip
-*.tar.gz
+# Model Weights & Compiled Inference Engines (Never commit raw weights)
 *.pt
+*.pth
+*.onnx
+*.engine
+*.bin
+*.xml
+*.safetensors
+*.torchscript
+RAER-TNORF*/
+REAR-FRONT*/
+
+# Datasets, Raw Media & Large Archives
+dataset/
+curated_lpr_dataset/
+archive/
 runs/
 sample_images/
 **/sample_images/
 test_samples/
 **/test_samples/
-dataset/
-RAER-TNORF*/
-REAR-FRONT*/
+captures/
+recordings/
+output/
+filter_checkpoint.jsonl
+browser_session/
+.lpr_session.json
+*/.lpr_session.json
+*.zip
+*.tar
+*.tar.gz
+*.gz
+*.mp4
+*.avi
+*.mkv
 
+# Training Data Dumps (Generated crops)
+training_ocr/character_bank/char_bank/
+training_ocr/character_bank/organized_crops/
+training_ocr/synthetic_data/augmented_plates/
+training_detection/datasets/*.zip
 
+# Local backups
+README.local.md
+.gitignore.local
 
-# IDEs
+# IDEs & OS
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# OS
 Thumbs.db
 Desktop.ini
 .DS_Store

@@ -1,0 +1,767 @@
+{
+  "0": {
+    "atlas_bbox_xywh": [
+      0,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      36,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "1": {
+    "atlas_bbox_xywh": [
+      128,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      164,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "2": {
+    "atlas_bbox_xywh": [
+      256,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      292,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "3": {
+    "atlas_bbox_xywh": [
+      384,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      420,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "4": {
+    "atlas_bbox_xywh": [
+      512,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      548,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "5": {
+    "atlas_bbox_xywh": [
+      640,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      676,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "6": {
+    "atlas_bbox_xywh": [
+      768,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      804,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "7": {
+    "atlas_bbox_xywh": [
+      896,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      932,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "8": {
+    "atlas_bbox_xywh": [
+      1024,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1060,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "9": {
+    "atlas_bbox_xywh": [
+      1152,
+      0,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1188,
+      31,
+      55,
+      66
+    ],
+    "aspect_ratio": 0.833
+  },
+  "ก": {
+    "atlas_bbox_xywh": [
+      0,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      35,
+      165,
+      57,
+      53
+    ],
+    "aspect_ratio": 1.075
+  },
+  "ข": {
+    "atlas_bbox_xywh": [
+      128,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      165,
+      165,
+      54,
+      53
+    ],
+    "aspect_ratio": 1.019
+  },
+  "ค": {
+    "atlas_bbox_xywh": [
+      256,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      290,
+      165,
+      59,
+      53
+    ],
+    "aspect_ratio": 1.113
+  },
+  "ฆ": {
+    "atlas_bbox_xywh": [
+      384,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      418,
+      166,
+      59,
+      52
+    ],
+    "aspect_ratio": 1.135
+  },
+  "ง": {
+    "atlas_bbox_xywh": [
+      512,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      549,
+      166,
+      53,
+      52
+    ],
+    "aspect_ratio": 1.019
+  },
+  "จ": {
+    "atlas_bbox_xywh": [
+      640,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      678,
+      165,
+      51,
+      53
+    ],
+    "aspect_ratio": 0.962
+  },
+  "ฉ": {
+    "atlas_bbox_xywh": [
+      768,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      803,
+      165,
+      57,
+      53
+    ],
+    "aspect_ratio": 1.075
+  },
+  "ช": {
+    "atlas_bbox_xywh": [
+      896,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      932,
+      165,
+      55,
+      53
+    ],
+    "aspect_ratio": 1.038
+  },
+  "ฌ": {
+    "atlas_bbox_xywh": [
+      1024,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1045,
+      165,
+      85,
+      53
+    ],
+    "aspect_ratio": 1.604
+  },
+  "ญ": {
+    "atlas_bbox_xywh": [
+      1152,
+      128,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1173,
+      156,
+      86,
+      71
+    ],
+    "aspect_ratio": 1.211
+  },
+  "ฎ": {
+    "atlas_bbox_xywh": [
+      0,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      34,
+      284,
+      59,
+      72
+    ],
+    "aspect_ratio": 0.819
+  },
+  "ฏ": {
+    "atlas_bbox_xywh": [
+      128,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      162,
+      284,
+      59,
+      72
+    ],
+    "aspect_ratio": 0.819
+  },
+  "ฐ": {
+    "atlas_bbox_xywh": [
+      256,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      293,
+      283,
+      53,
+      74
+    ],
+    "aspect_ratio": 0.716
+  },
+  "ฑ": {
+    "atlas_bbox_xywh": [
+      384,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      418,
+      294,
+      60,
+      52
+    ],
+    "aspect_ratio": 1.154
+  },
+  "ฒ": {
+    "atlas_bbox_xywh": [
+      512,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      532,
+      293,
+      87,
+      53
+    ],
+    "aspect_ratio": 1.642
+  },
+  "ณ": {
+    "atlas_bbox_xywh": [
+      640,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      661,
+      293,
+      86,
+      53
+    ],
+    "aspect_ratio": 1.623
+  },
+  "ด": {
+    "atlas_bbox_xywh": [
+      768,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      803,
+      293,
+      58,
+      53
+    ],
+    "aspect_ratio": 1.094
+  },
+  "ต": {
+    "atlas_bbox_xywh": [
+      896,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      930,
+      293,
+      60,
+      53
+    ],
+    "aspect_ratio": 1.132
+  },
+  "ถ": {
+    "atlas_bbox_xywh": [
+      1024,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1059,
+      293,
+      58,
+      53
+    ],
+    "aspect_ratio": 1.094
+  },
+  "ท": {
+    "atlas_bbox_xywh": [
+      1152,
+      256,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1186,
+      294,
+      59,
+      52
+    ],
+    "aspect_ratio": 1.135
+  },
+  "ธ": {
+    "atlas_bbox_xywh": [
+      0,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      38,
+      421,
+      51,
+      53
+    ],
+    "aspect_ratio": 0.962
+  },
+  "น": {
+    "atlas_bbox_xywh": [
+      128,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      162,
+      422,
+      59,
+      52
+    ],
+    "aspect_ratio": 1.135
+  },
+  "บ": {
+    "atlas_bbox_xywh": [
+      256,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      291,
+      422,
+      58,
+      52
+    ],
+    "aspect_ratio": 1.115
+  },
+  "ป": {
+    "atlas_bbox_xywh": [
+      384,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      419,
+      413,
+      58,
+      70
+    ],
+    "aspect_ratio": 0.829
+  },
+  "ผ": {
+    "atlas_bbox_xywh": [
+      512,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      544,
+      422,
+      63,
+      52
+    ],
+    "aspect_ratio": 1.212
+  },
+  "ฝ": {
+    "atlas_bbox_xywh": [
+      640,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      672,
+      413,
+      63,
+      69
+    ],
+    "aspect_ratio": 0.913
+  },
+  "พ": {
+    "atlas_bbox_xywh": [
+      768,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      798,
+      422,
+      67,
+      51
+    ],
+    "aspect_ratio": 1.314
+  },
+  "ฟ": {
+    "atlas_bbox_xywh": [
+      896,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      927,
+      413,
+      66,
+      69
+    ],
+    "aspect_ratio": 0.957
+  },
+  "ภ": {
+    "atlas_bbox_xywh": [
+      1024,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1058,
+      421,
+      59,
+      53
+    ],
+    "aspect_ratio": 1.113
+  },
+  "ม": {
+    "atlas_bbox_xywh": [
+      1152,
+      384,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1186,
+      422,
+      59,
+      52
+    ],
+    "aspect_ratio": 1.135
+  },
+  "ย": {
+    "atlas_bbox_xywh": [
+      0,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      35,
+      549,
+      57,
+      53
+    ],
+    "aspect_ratio": 1.075
+  },
+  "ร": {
+    "atlas_bbox_xywh": [
+      128,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      168,
+      549,
+      48,
+      53
+    ],
+    "aspect_ratio": 0.906
+  },
+  "ล": {
+    "atlas_bbox_xywh": [
+      256,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      292,
+      549,
+      55,
+      53
+    ],
+    "aspect_ratio": 1.038
+  },
+  "ว": {
+    "atlas_bbox_xywh": [
+      384,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      424,
+      549,
+      47,
+      53
+    ],
+    "aspect_ratio": 0.887
+  },
+  "ศ": {
+    "atlas_bbox_xywh": [
+      512,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      545,
+      549,
+      61,
+      54
+    ],
+    "aspect_ratio": 1.13
+  },
+  "ษ": {
+    "atlas_bbox_xywh": [
+      640,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      673,
+      550,
+      62,
+      52
+    ],
+    "aspect_ratio": 1.192
+  },
+  "ส": {
+    "atlas_bbox_xywh": [
+      768,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      804,
+      548,
+      55,
+      55
+    ],
+    "aspect_ratio": 1.0
+  },
+  "ห": {
+    "atlas_bbox_xywh": [
+      896,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      931,
+      550,
+      57,
+      51
+    ],
+    "aspect_ratio": 1.118
+  },
+  "ฬ": {
+    "atlas_bbox_xywh": [
+      1024,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1055,
+      543,
+      66,
+      66
+    ],
+    "aspect_ratio": 1.0
+  },
+  "อ": {
+    "atlas_bbox_xywh": [
+      1152,
+      512,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      1188,
+      549,
+      55,
+      53
+    ],
+    "aspect_ratio": 1.038
+  },
+  "ฮ": {
+    "atlas_bbox_xywh": [
+      0,
+      640,
+      128,
+      128
+    ],
+    "char_bbox_xywh": [
+      36,
+      676,
+      55,
+      56
+    ],
+    "aspect_ratio": 0.982
+  }
+}

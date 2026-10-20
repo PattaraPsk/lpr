@@ -1,0 +1,148 @@
+# Official Thai Department of Land Transport (DLT) Plate Categories & Design Rules
+
+categories:
+  private_car:
+    category_id: "private_car"
+    description: "Private Cars (Sedans, SUVs, Hatches up to 7 seats)"
+    plate_design:
+      background_color: "white"
+      text_color: "black"
+      rgb_bg: [248, 248, 248]
+      rgb_text: [20, 20, 20]
+      layout: "standard_single_row"
+      aspect_ratio: 2.23
+    legal_consonants:
+      - "ก"
+      - "ข"
+      - "ง"
+      - "จ"
+      - "ฉ"
+      - "ช"
+      - "ฌ"
+      - "ญ"
+      - "ฎ"
+      - "ฆ"
+      - "ธ"
+      - "ฐ"
+      - "พ"
+      - "ภ"
+      - "ว"
+      - "ศ"
+      - "ษ"
+      - "ส"
+    prefix_format: "[1-9]?[ก-ฮ]{2}"
+
+  private_pickup:
+    category_id: "private_pickup"
+    description: "Private Pickups (2-door light commercial trucks)"
+    plate_design:
+      background_color: "white"
+      text_color: "green"
+      rgb_bg: [248, 248, 248]
+      rgb_text: [15, 125, 45]
+      layout: "standard_single_row"
+      aspect_ratio: 2.23
+    legal_consonants:
+      - "ฒ"
+      - "ณ"
+      - "ต"
+      - "ถ"
+      - "บ"
+      - "ป"
+      - "ผ"
+      - "ย"
+      - "ร"
+      - "ล"
+    prefix_format: "[ฒณตถบปผยรล]{1,2}"
+
+  private_van:
+    category_id: "private_van"
+    description: "Private Vans / Microbuses (Vehicles with more than 7 seats)"
+    plate_design:
+      background_color: "white"
+      text_color: "blue"
+      rgb_bg: [248, 248, 248]
+      rgb_text: [15, 65, 175]
+      layout: "standard_single_row"
+      aspect_ratio: 2.23
+    legal_consonants:
+      - "น"
+      - "ฬ"
+      - "อ"
+      - "ฮ"
+    prefix_format: "[นฬอฮ]{1,2}"
+
+  public_taxi:
+    category_id: "public_taxi"
+    description: "Public Taxis (Standard commercial & cooperative taxis)"
+    plate_design:
+      background_color: "yellow"
+      text_color: "black"
+      rgb_bg: [245, 210, 30]
+      rgb_text: [20, 20, 20]
+      layout: "standard_single_row"
+      aspect_ratio: 2.23
+    legal_consonants:
+      - "ท"
+      - "ม"
+    prefix_format: "ท[ก-ฮ]|ม[ก-ฮ]"
+
+  tuktuk:
+    category_id: "tuktuk"
+    description: "Tuk-Tuks (Commercial three-wheelers)"
+    plate_design:
+      background_color: "yellow"
+      text_color: "green"
+      rgb_bg: [245, 210, 30]
+      rgb_text: [15, 125, 45]
+      layout: "standard_single_row"
+      aspect_ratio: 2.23
+    legal_consonants:
+      - "ศ"
+      - "ส"
+    prefix_format: "ศข|สก|สข"
+
+  trailer_tractor:
+    category_id: "trailer_tractor"
+    description: "Trailers & Tractors (Construction & Agricultural)"
+    plate_design:
+      background_color: "orange"
+      text_color: "black"
+      rgb_bg: [240, 125, 25]
+      rgb_text: [20, 20, 20]
+      layout: "standard_single_row"
+      aspect_ratio: 2.23
+    legal_consonants:
+      - "ซ"
+      - "ฆ"
+    prefix_format: "[ซฆ][ก-ฮ]?"
+
+  service_vehicle:
+    category_id: "service_vehicle"
+    description: "Service Vehicles (Airport / Tour / Hotel transport)"
+    plate_design:
+      background_color: "green"
+      text_color: "white"
+      rgb_bg: [20, 120, 50]
+      rgb_text: [250, 250, 250]
+      layout: "standard_single_row"
+      aspect_ratio: 2.23
+    legal_consonants:
+      - "ฌ"
+      - "ณ"
+    prefix_format: "[ฌณ][ก-ฮ]?"
+
+  motorcycle:
+    category_id: "motorcycle"
+    description: "Motorcycles (Two-wheeled motor vehicles)"
+    plate_design:
+      background_color: "white"
+      text_color: "black"
+      rgb_bg: [248, 248, 248]
+      rgb_text: [20, 20, 20]
+      layout: "motorcycle_double_row"
+      aspect_ratio: 1.15
+    legal_consonants:
+      - "ค"
+      - "ฎ"
+    prefix_format: "[1-9]?[ก-ฮ]{1,2}"
