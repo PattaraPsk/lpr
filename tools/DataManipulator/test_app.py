@@ -248,6 +248,28 @@ def test_ai_reader_comparison_and_replace():
         assert res["d4"] == "1009", f"Expected '1009', got {res['d4']}"
         assert res["province"] == "กรุงเทพมหานคร", f"Expected 'กรุงเทพมหานคร', got {res['province']}"
         print(f"  -> Real image a1.3.4.1 inference OK: {res['full_plate']} (Confidence: {res['confidence']:.2%})")
+
+    # 1.1 Test Khor-Kai ('ข') token mapping & inference
+    from app.plate_reader import decode_tokens_to_plate, EASYOCR_DECODING_LIST
+    assert len(EASYOCR_DECODING_LIST) == 187, f"Expected 187 classes, got {len(EASYOCR_DECODING_LIST)}"
+    assert EASYOCR_DECODING_LIST[183] == "ข", f"Token 183 must decode to 'ข', got {EASYOCR_DECODING_LIST[183]!r}"
+    assert EASYOCR_DECODING_LIST[184] == "ซ", f"Token 184 must decode to 'ซ', got {EASYOCR_DECODING_LIST[184]!r}"
+
+    d3_test, d4_test, prov_test, _ = decode_tokens_to_plate([183, 28, 60, 3, 3, 11, 60, 93, 1])
+    assert d3_test == "ขง", f"Expected 'ขง', got {d3_test!r}"
+    assert d4_test == "119", f"Expected '119', got {d4_test!r}"
+    assert prov_test == "กรุงเทพมหานคร", f"Expected 'กรุงเทพมหานคร', got {prov_test!r}"
+
+    d3_khor, _, _, _ = decode_tokens_to_plate([3, 183, 183, 60, 11, 9, 11, 9, 60, 93, 1])
+    assert d3_khor == "1ขข", f"Expected '1ขข', got {d3_khor!r}"
+
+    khor_plate = Path("dataset/curated_lpr_dataset/plates/AA34_car_ขง_119_กรุงเทพมหานคร.jpg")
+    if khor_plate.exists():
+        res_khor = reader.predict(khor_plate)
+        assert res_khor["d3"] == "ขง", f"Expected 'ขง', got {res_khor['d3']!r}"
+        assert res_khor["d4"] == "119", f"Expected '119', got {res_khor['d4']!r}"
+        print(f"  -> Khor-Kai ('ข') real image inference OK: {res_khor['full_plate']}")
+    print("  -> Khor-Kai ('ข') decode mapping verified OK")
     
     # 2. Test ImageItem comparison helper
     item = ImageItem(Path("test_WhiteBlackCar_1กข_9999_เชียงใหม่.jpg"))
