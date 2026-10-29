@@ -38,7 +38,7 @@ class CheckViewDialog(QDialog):
     
     def __init__(self, session: SessionManager, current_idx: int = 0, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Check & Review Image Status [a1.3.4.1 AI Enabled]")
+        self.setWindowTitle("Check & Review Image Status [Edge AI Enabled]")
         self.resize(1200, 680)
         self.session = session
         self.items = session.items
@@ -176,10 +176,10 @@ class CheckViewDialog(QDialog):
         f_layout.setContentsMargins(0, 0, 0, 0)
         f_layout.setSpacing(8)
         
-        self.current_filter = "all"
+        self.current_filter = getattr(self.session, "active_status_filter", "all")
         for code, label in self.filters:
             btn = QRadioButton(label)
-            if code == "all":
+            if code == self.current_filter:
                 btn.setChecked(True)
             btn.toggled.connect(lambda checked, c=code: self._on_filter_changed(checked, c))
             self.filter_group.addButton(btn)
@@ -210,7 +210,7 @@ class CheckViewDialog(QDialog):
         
         bottom_bar.addStretch()
         
-        self.btn_replace_ai = QPushButton("⚡ Replace with AI (a1.3.4.1)")
+        self.btn_replace_ai = QPushButton("⚡ Replace with AI")
         self.btn_replace_ai.setStyleSheet("background-color: #059669; color: white; font-weight: bold;")
         self.btn_replace_ai.setToolTip("Replace d3, d4, and Province of selected image with AI prediction")
         self.btn_replace_ai.clicked.connect(self._replace_selected_ai)
@@ -260,6 +260,16 @@ class CheckViewDialog(QDialog):
             elif self.current_filter == "ai_diff":
                 comp = item.get_ai_comparison()
                 if not comp["has_ai"] or comp["all_match"]:
+                    continue
+            elif self.current_filter == "not_plate":
+                if not (item.status == "not_plate" or (item.d3 == "+" and item.d4 == "+" and item.province == "+") or item.plate_type == "+"):
+                    continue
+            elif self.current_filter == "cannot_read":
+                if not (item.status == "cannot_read" or (item.d3 == "-" and item.d4 == "-" and item.province == "-") or item.plate_type == "-"):
+                    continue
+            elif self.current_filter == "pending":
+                is_special = (item.d3 in ("+", "-") and item.d4 in ("+", "-")) or item.plate_type in ("+", "-")
+                if item.status != "pending" or is_special:
                     continue
             elif self.current_filter != "all" and item.status != self.current_filter:
                 continue
@@ -363,6 +373,7 @@ class CheckViewDialog(QDialog):
         if idx_item:
             target_idx = idx_item.data(Qt.ItemDataRole.UserRole)
             self.selected_index = target_idx
+            self.session.active_status_filter = self.current_filter
             self.image_selected.emit(target_idx)
             self.accept()
 

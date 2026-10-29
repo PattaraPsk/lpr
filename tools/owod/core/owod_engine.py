@@ -103,7 +103,16 @@ class OWODDetector:
             # 2. Base model
             local_model = Path(self.model_path)
             if not local_model.exists():
-                for candidate in [Path("yolov8s-worldv2.pt"), Path("../yolov8s-worldv2.pt"), Path("../../yolov8s-worldv2.pt"), Path("yolov8s.pt")]:
+                for candidate in [
+                    Path("models/detector/yolov8s-worldv2.pt"),
+                    Path("../../models/detector/yolov8s-worldv2.pt"),
+                    Path("yolov8s-worldv2.pt"),
+                    Path("../yolov8s-worldv2.pt"),
+                    Path("../../yolov8s-worldv2.pt"),
+                    Path("models/detector/yolov8s.pt"),
+                    Path("../../models/detector/yolov8s.pt"),
+                    Path("yolov8s.pt")
+                ]:
                     if candidate.exists():
                         self.model_path = str(candidate.resolve())
                         break
@@ -111,21 +120,31 @@ class OWODDetector:
             self.model = YOLO(self.model_path)
             
             # 3. Vehicle proposal model
-            for v_cand in [Path("yolov8s.pt"), Path("../yolov8s.pt"), Path("../../yolov8s.pt")]:
+            for v_cand in [
+                Path("models/detector/yolov8s.pt"),
+                Path("../../models/detector/yolov8s.pt"),
+                Path("yolov8s.pt"),
+                Path("../yolov8s.pt"),
+                Path("../../yolov8s.pt")
+            ]:
                 if v_cand.exists():
                     self.vehicle_model = YOLO(str(v_cand.resolve()))
                     break
             if self.vehicle_model is None:
                 self.vehicle_model = self.model
             
-            # 4. Vehicle Front/Back Orientation model (RAER-TNORF)
+            # 4. Vehicle Front/Back Orientation model (vehicle-orientation)
             self.orientation_model = None
             for rf_cand in [
-                Path("RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt"),
-                Path("../RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt"),
-                Path("../../RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt"),
-                Path("rear_front_best.pt"),
-                Path("models/rear_front_best.pt")
+                Path("models/detector/vehicle_orientation_best.pt"),
+                Path("../models/detector/vehicle_orientation_best.pt"),
+                Path("../../models/detector/vehicle_orientation_best.pt"),
+                Path("vehicle_plate_detector.pt"),
+                Path("models/detector/vehicle_plate_yolov11n.pt"),
+                Path("../../models/detector/vehicle_plate_yolov11n.pt"),
+                Path("models/detector/vehicle_plate_detector.pt"),
+                Path("../../models/detector/vehicle_plate_detector.pt"),
+                Path("models/vehicle_plate_detector.pt")
             ]:
                 if rf_cand.exists():
                     try:

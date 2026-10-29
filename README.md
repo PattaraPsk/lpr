@@ -14,12 +14,22 @@ lpr/
 ├── pyproject.toml                      # PEP 517/621 & ISO 19770 software packaging metadata
 ├── README.md                           # Main workspace documentation
 ├── requirements.txt                    # Pinned edge runtime dependencies
+├── demo_realtime.py                    # Root entry point for Real-Time Thai LPR Demo
 ├── run.bat                             # Global interactive launcher for all tools
+├── run_demo_realtime.bat               # Shortcut: interactive Real-Time Thai LPR Demo runner
 ├── run_detection.bat                   # CAM01 / CCTV video detection runner
 ├── run_owod_studio.bat                 # Shortcut: launch OWOD Studio GUI
 ├── run_tests.bat                       # Automated ISO compliance test runner (ISO 29119)
+├── run_track_lpr.bat                   # Shortcut: batch video tracker & snapshot extractor
+├── train_detector.bat                  # Shortcut: train YOLO Plate & Vehicle Detector
+├── train_reader.bat                    # Shortcut: train VisionAttentionOCR Plate Reader
 ├── autorun_owod.bat                    # Shortcut: run batch OWOD on dataset/
 ├── STANDARDS.md                        # Enterprise & ISO Standards Compliance Manual
+│
+├── models/                             # Consolidated neural model checkpoints
+│   ├── detector/                       # Plate & Front/Rear YOLO models (yolov11n, yolov8s)
+│   ├── reader/                         # Thai OCR models (Edge Reader / SelenLPR)
+│   └── MODEL_CATALOG.md                # Architecture, inputs, outputs, and validation metrics
 │
 ├── annotations/                        # Version-controlled labeling progress & metadata (ISO 3166-2:TH / ISO 25012)
 │   ├── plates_session.json             # Canonical DataManipulator labeling session (auto-mirrored)
@@ -28,17 +38,34 @@ lpr/
 │   └── LABELING_PROGRESS.md            # Live labeling audit report and statistics
 │
 ├── tests/                              # Automated test suites (ISO/IEC/IEEE 29119)
+│   ├── test_alpr_package.py            # Unit tests for modular tools.alpr package
+│   ├── test_demo_realtime.py           # Real-Time ALPR end-to-end integration tests
 │   └── test_iso_compliance.py          # ISO 3166-2:TH, 8601, 25012, 5259, 27001, 42001 verification
 │
 ├── dataset/                            # Local datasets & raw media (git-ignored)
-│   ├── curated_lpr_dataset/            # Approved Thai LPR dataset images
-│   ├── yolo_owod_labeled_dataset/      # Auto-labeled YOLO dataset (train/val/crops)
-│   └── Raw Video Record/               # CCTV / Dashcam source recordings (ISO Partitioned)
+│   ├── zip/                            # Compressed dataset archives (.zip)
+│   ├── raw/                            # Source recordings (CCTV / Dashcam / MP4)
+│   ├── snapshot/                       # Extracted frame snapshots & vehicle crops
+│   ├── labeled/                        # Auto-labeled & detected datasets (YOLO / OCR)
+│   ├── verified/                       # Human-curated & approved staging datasets
+│   └── ready/                          # Release versions (YYYYMMDDhhmm/plate_folder/)
 │
 └── tools/                              # Tooling suites
     ├── README.md                       # Overview of tools directory
     ├── run.bat                         # Interactive selector menu (CLI/batch)
+    ├── demo_realtime.py                # Backward-compatible real-time demo launcher
+    ├── train_models.py                 # Unified detector & OCR model training hub
+    ├── process_and_track_lpr.py        # Batch video LPR tracker & snapshot extractor
     ├── detect_cam_videos.py            # CAM01 Video detection & tracking
+    │
+    ├── alpr/                           # Modularized Real-Time Thai ALPR Edge Engine
+    │   ├── __init__.py                 # Clean package public exports
+    │   ├── config.py                   # Centralized model resolution, fonts & thresholds
+    │   ├── stream.py                   # Thread-safe zero-latency frame reader
+    │   ├── tracker.py                  # IoU/distance tracker & consensus voting
+    │   ├── detector.py                 # Coarse-to-fine cascader & plate detector
+    │   ├── hud.py                      # Thai Unicode font cache, badges & telemetry HUD
+    │   └── demo.py                     # Interactive orchestration, hotkeys & playlist
     │
     ├── rtsp_collector/                 # ISO-Compliant RTSP Stream Ingestion Engine
     │   ├── cli.py                      # CLI tool (probe, record, verify, status)
@@ -105,18 +132,32 @@ Run `run.bat` at the repository root to choose an action from the interactive me
 ```cmd
 run.bat
 ```
+- `[0]` Launch **Real-Time Thai LPR Demo** (Webcam / RTSP / Video)
 - `[1]` Launch **OWOD Studio GUI** (Auto-Labeling & YOLO Pruning)
 - `[2]` Auto-Run **Batch OWOD** on all files in `dataset/` (GPU CUDA)
 - `[3]` Launch **Thai LPR Dataset Annotator & Reviewer** (`DataManipulator`)
 - `[4]` Launch **ISO-Standard RTSP Stream Collector** (`rtsp_collector`)
 - `[5]` Run **CAM01 Video Detection & Auto-Tracking Runner**
 - `[6]` Run **ISO Compliance & Quality Assurance Test Suite** (`run_tests.bat`)
+- `[7]` Train **Plate Detector & Vehicle Classifier** (`train_detector.bat`)
+- `[8]` Train **Thai Plate Reader OCR** (`train_reader.bat`)
+- `[9]` Run **Batch LPR Video Tracking & Snapshot Extractor** (`run_track_lpr.bat`)
 
 ### Option 2: Direct Tool Launchers
 - **Run ISO Standards Test Suite**:
   ```cmd
   run_tests.bat
   # or: python -m unittest discover tests
+  ```
+- **Real-Time ALPR Demo**:
+  ```cmd
+  run_demo_realtime.bat
+  # or: python demo_realtime.py
+  ```
+- **Train Detector & OCR**:
+  ```cmd
+  train_detector.bat
+  train_reader.bat
   ```
 - **OWOD Studio GUI**:
   ```cmd
@@ -148,7 +189,20 @@ run.bat
 
 ## 🛠️ Tool Suites Overview
 
-### 1. DataManipulator (`tools/DataManipulator/`)
+### 1. ALPR Edge Engine (`tools/alpr/` & `demo_realtime.py`)
+- **Zero-Latency Ingestion** (`stream.py`): Multi-threaded camera/RTSP frame reader with automatic frame-dropping to eliminate queue latency.
+- **Full Inference Pipeline** (`detector.py`):
+  - Plate & Front/Rear orientation detection (`YOLOv11n`).
+  - Contextual vehicle classification (`YOLOv8s`).
+  - Spatial multi-object tracking across frames (`tracker.py`).
+  - Thai OCR reading (`Edge Thai OCR Reader`) with ISO 3166-2:TH province resolution.
+- **Edge-AI HUD Overlay** (`hud.py`): High-speed cached Thai Unicode font rendering (Tahoma / Leelawadee) with corner brackets, real-time FPS/latency telemetry, and interactive controls (`[Q] Quit`, `[SPACE] Pause`, `[R] Flip 180°`, `[S] Snapshot`, `[T] Boxes`, `[H] HUD`, `[Drag Mouse] Set ROI`, `[X] Clear ROI`, `[N/P] Next/Prev VDO`).
+
+### 2. Unified Model Training Hub (`tools/train_models.py`)
+- Standalone CLI & script suite to train or fine-tune both the YOLO Plate & Vehicle Detector and the VisionAttentionOCR reader.
+- Automatic candidate weight resolution from `models/` with fallback logic.
+
+### 3. DataManipulator (`tools/DataManipulator/`)
 - Desktop review and annotation GUI for Thai License Plate datasets.
 - Manages standardized 5-element filename structure:
   ```text
@@ -156,13 +210,13 @@ run.bat
   ```
 - Supports all 10 Thai vehicle plate categories, Thai province search, duplicate cleanup (`_dup`), subfolder grouping, and 9-column check table review.
 
-### 2. OWOD Studio (`tools/owod/`)
+### 4. OWOD Studio (`tools/owod/`)
 - **Zero-Shot Auto-Labeling**: Uses YOLO-World v2 models to detect license plates across image and video directories automatically.
 - **YOLO Model Surgery & Pruning**: Inspect model layers, freeze backbone/neck, slice model depth, and apply structured or unstructured weight pruning.
 - **Fine-Tuning**: Trains custom pruned models directly against auto-labeled license plate datasets with live training metrics and curves.
-- **Orientation & Vehicle Context**: Supports Front/Back vehicle orientation models (`rear_front_best.pt` / `RAER-TNORF`) and COCO vehicle context matching.
+- **Orientation & Vehicle Context**: Supports Front/Back vehicle orientation models (`vehicle_plate_detector.pt`) and COCO vehicle context matching.
 
-### 3. ISO RTSP Stream Collector (`tools/rtsp_collector/`)
+### 5. ISO RTSP Stream Collector (`tools/rtsp_collector/`)
 - **Systematic CCTV & RTSP Ingestion**: Continuous 24/7 stream capture with auto-recovery and exponential backoff.
 - **ISO Standard Compliance**:
   - **ISO 8601**: Standardized UTC/local timestamping and `CAM01/YYYY/MM/DD/` partitioning.
@@ -170,11 +224,6 @@ run.bat
   - **ISO/IEC 25012**: SHA-256 data integrity hashes and FFprobe container/frame validation.
   - **ISO/IEC 27001**: Credential decoupling via `.env` and automated secret masking in logs and manifests.
   - **ISO/IEC 20547-3**: Staging-to-Bronze Big Data landing zone architecture.
-
-### 4. Video Detection & DLT Dataset Builder (`tools/detect_cam_videos.py` & `tools/owod/build_dlt_lpr_dataset.py`)
-- **Incremental Video Processing**: Deduplicates already-processed CCTV clips using an atomic JSON tracker (`dataset/processed_videos_tracker.json`).
-- **DLT Plate Classification**: Maps COCO vehicles (car, motorcycle, truck, bus) to Thailand DLT plate categories with geometric aspect ratio and plausibility filtering.
-- **ISO 5259 Data Quality Reports**: Automatically generates `data_quality_report.json` with class imbalance, box containment, and FIPS SHA-256 verification.
 
 ---
 

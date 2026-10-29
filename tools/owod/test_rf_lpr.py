@@ -4,17 +4,17 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 
-rf_model_path = Path("RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt")
+rf_model_path = Path("models/detector/vehicle_orientation_best.pt")
 plate_model_path = Path("yolov11x_license_plate.pt")
 
 if not rf_model_path.exists():
-    for alt in [Path("rear_front_best.pt"), Path("models/rear_front_best.pt"), Path("models/detector/front_rear_lpr_yolov11n.pt")]:
+    for alt in [Path("vehicle_plate_detector.pt"), Path("models/vehicle_plate_detector.pt"), Path("models/detector/vehicle_plate_yolov11n.pt")]:
         if alt.exists():
             rf_model_path = alt
             break
 
 if not plate_model_path.exists():
-    for alt_p in [Path("models/detector/front_rear_lpr_yolov11n.pt"), Path("rear_front_best.pt"), Path("yolov8s-worldv2.pt")]:
+    for alt_p in [Path("models/detector/vehicle_plate_yolov11n.pt"), Path("vehicle_plate_detector.pt"), Path("yolov8s-worldv2.pt")]:
         if alt_p.exists():
             plate_model_path = alt_p
             break

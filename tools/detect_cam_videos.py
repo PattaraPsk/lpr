@@ -213,7 +213,7 @@ def process_video(
             # Stage 2: Detect License Plates
             p_res = plate_model(frame, conf=conf_thresh, imgsz=1280, verbose=False, device=device)[0]
 
-            # Stage 3: Detect Car Front & Back Orientations (RAER-TNORF)
+            # Stage 3: Detect Car Front & Back Orientations (Vehicle Orientation)
             rf_boxes = []
             if rf_model is not None:
                 rf_res = rf_model(frame, conf=conf_thresh, verbose=False, device=device)[0]
@@ -335,9 +335,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run License Plate & DLT Vehicle Detection on Video Chunks with Auto-Tracking (ISO 25012 / 8601 Compliant)"
     )
-    parser.add_argument("--input-dir", type=str, default="dataset/Raw Video Record/CAM01/2026/10/19",
+    parser.add_argument("--input-dir", type=str, default="dataset/raw/Raw Video Record/CAM01/2026/10/19",
                         help="Directory containing MP4 video files to process")
-    parser.add_argument("--tracker-file", type=str, default="dataset/Raw Video Record/CAM01/processed_videos.json",
+    parser.add_argument("--tracker-file", type=str, default="dataset/raw/Raw Video Record/CAM01/processed_videos.json",
                         help="JSON file tracking already processed videos")
     parser.add_argument("--output-dir", type=str, default="dataset/detections/CAM01/2026/10/19",
                         help="Directory to save detection results and crops")
@@ -347,7 +347,7 @@ def main():
                         help="Degrees to rotate frame (180 for upside-down CAM01)")
     parser.add_argument("--conf", type=float, default=0.25,
                         help="Detection confidence threshold (default: 0.25)")
-    parser.add_argument("--rf-model", type=str, default="RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt",
+    parser.add_argument("--rf-model", type=str, default="models/detector/vehicle_orientation_best.pt",
                         help="Path to Front/Back car orientation model checkpoint (best.pt)")
     parser.add_argument("--force", action="store_true",
                         help="Force re-processing of already processed files")
@@ -356,6 +356,13 @@ def main():
     input_dir = Path(args.input_dir)
     tracker_path = Path(args.tracker_file)
     output_dir = Path(args.output_dir)
+
+    # Auto-resolve raw tier if legacy path provided
+    if not input_dir.exists():
+        raw_input = Path(str(input_dir).replace("dataset\\Raw Video Record", "dataset\\raw\\Raw Video Record").replace("dataset/Raw Video Record", "dataset/raw/Raw Video Record"))
+        if raw_input.exists():
+            input_dir = raw_input
+            tracker_path = Path(str(tracker_path).replace("dataset\\Raw Video Record", "dataset\\raw\\Raw Video Record").replace("dataset/Raw Video Record", "dataset/raw/Raw Video Record"))
 
     if not input_dir.exists():
         logger.error(f"Input directory does not exist: {sanitize_path(input_dir)}")
@@ -414,15 +421,29 @@ def main():
     logger.info(f"Loading neural models on device: {device}...")
 
     # Load vehicle detector
+    veh_candidates = [
+        "models/detector/yolov8s.pt",
+        "models/yolov8s.pt",
+        "yolov8s.pt"
+    ]
     vehicle_model_path = "yolov8s.pt"
-    if not Path(vehicle_model_path).exists():
-        logger.warning(f"Vehicle model '{vehicle_model_path}' not found at root, downloading/loading default...")
+    for cand in veh_candidates:
+        if Path(cand).exists():
+            vehicle_model_path = cand
+            break
     vehicle_model = YOLO(vehicle_model_path)
+    logger.info(f"Vehicle detector loaded from: {vehicle_model_path}")
 
     # Load license plate detector
     plate_model_path = "yolov11x_license_plate.pt"
     if not Path(plate_model_path).exists():
-        for alt_plate in ["yolov8s-worldv2.pt", "yolov8n.pt"]:
+        for alt_plate in [
+            "models/detector/vehicle_plate_yolov11n.pt",
+            "models/detector/yolov8s-worldv2.pt",
+            "models/detector/yolov8n.pt",
+            "yolov8s-worldv2.pt",
+            "yolov8n.pt"
+        ]:
             if Path(alt_plate).exists():
                 plate_model_path = alt_plate
                 break
@@ -432,9 +453,12 @@ def main():
     rf_model = None
     rf_candidates = [
         args.rf_model,
-        "rear_front_best.pt",
-        "models/rear_front_best.pt",
-        "RAER-TNORF.v5-gray-blur.yolov8.i640.e1000/train/weights/best.pt"
+        "models/detector/vehicle_plate_detector_best.pt",
+        "models/detector/vehicle_plate_yolov11n.pt",
+        "models/detector/vehicle_plate_detector.pt",
+        "models/vehicle_plate_detector.pt",
+        "vehicle_plate_detector.pt",
+        "models/detector/vehicle_orientation_best.pt"
     ]
     for cand in rf_candidates:
         if cand and Path(cand).exists():

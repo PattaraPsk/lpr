@@ -1,6 +1,6 @@
 """
 Main Application Window for Thai License Plate (LPR) Annotation & Review.
-Updated to support AI Reader (a1.3.4.1) inference, live field comparison (d3, d4, province),
+Updated to support AI Reader (AI Reader) inference, live field comparison (d3, d4, province),
 and selective/bulk replacement of predicted plate elements.
 """
 
@@ -12,10 +12,11 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QPushButton, QLineEdit, QFileDialog, QMessageBox,
     QProgressBar, QFrame, QGroupBox, QGridLayout, QComboBox,
-    QInputDialog, QCheckBox, QScrollArea, QProgressDialog
+    QInputDialog, QCheckBox, QScrollArea, QProgressDialog,
+    QTableWidget, QTableWidgetItem, QHeaderView, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QFont, QKeySequence, QIcon, QShortcut
+from PyQt6.QtGui import QFont, QKeySequence, QIcon, QShortcut, QColor
 
 from .session_manager import SessionManager, ImageItem
 from .image_viewer import ImageViewerWidget
@@ -24,24 +25,29 @@ from .plate_type_combo import PlateTypeComboBox
 from .check_view import CheckViewDialog
 from .provinces import normalize_thai_script
 from .reader_worker import AISingleReaderWorker, AIBatchReaderWorker
+from .training_dialog import TrainingDialog
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Thai LPR Dataset Annotator & Reviewer [a1.3.4.1 AI Enabled]")
+        self.setWindowTitle("Thai LPR Dataset Annotator & Reviewer [Edge AI Enabled]")
         self.resize(1400, 920)
         self.setMinimumSize(1020, 680)
         
         self.session = SessionManager()
         
-        # State for active a1.3.4.1 predictions
+        # State for active AI Reader predictions
         self._active_worker: Optional[AISingleReaderWorker] = None
         self._batch_worker: Optional[AIBatchReaderWorker] = None
         self._latest_ai_d3: str = ""
         self._latest_ai_d4: str = ""
         self._latest_ai_prov: str = ""
         self._latest_ai_conf: float = 0.0
+        
+        # State for YOLO bounding box selection & editing
+        self.selected_box_index: Optional[int] = None
+        self._syncing_coords: bool = False
         
         self._init_ui()
         self._setup_shortcuts()
@@ -64,6 +70,7 @@ class MainWindow(QMainWindow):
         splitter.setHandleWidth(8)
         
         self.image_viewer = ImageViewerWidget(self)
+        self.image_viewer.box_clicked.connect(self._on_viewer_box_clicked)
         splitter.addWidget(self.image_viewer)
         
         self.edit_panel = self._create_edit_panel()
@@ -99,7 +106,7 @@ class MainWindow(QMainWindow):
         h_layout.addWidget(self.btn_open_folder)
         
         # Subfolder Grouping Selector
-        lbl_sf = QLabel("Group Subfolder:")
+        lbl_sf = QLabel("Folder:")
         lbl_sf.setStyleSheet("font-weight: bold; color: #a78bfa; margin-left: 4px;")
         h_layout.addWidget(lbl_sf)
         
@@ -108,6 +115,48 @@ class MainWindow(QMainWindow):
         self.combo_subfolder.addItem("All Subfolders", userData="(All)")
         self.combo_subfolder.currentIndexChanged.connect(self._on_subfolder_changed)
         h_layout.addWidget(self.combo_subfolder)
+
+        # Class Filter Selector (For YOLO Object Detection Mode)
+        self.lbl_filter_class = QLabel("Filter Class:")
+        self.lbl_filter_class.setStyleSheet("font-weight: bold; color: #38bdf8; margin-left: 6px;")
+        h_layout.addWidget(self.lbl_filter_class)
+
+        self.combo_class_filter = QComboBox()
+        self.combo_class_filter.setObjectName("comboClassFilter")
+        self.combo_class_filter.addItem("(All Classes)", userData=-1)
+        self.combo_class_filter.currentIndexChanged.connect(self._on_class_filter_changed)
+        h_layout.addWidget(self.combo_class_filter)
+        
+        # Status Filter Selector (All Images, Pending, Not Plate, Cannot Read, Approved, etc.)
+        self.lbl_filter_status = QLabel("Filter:")
+        self.lbl_filter_status.setStyleSheet("font-weight: bold; color: #38bdf8; margin-left: 6px;")
+        h_layout.addWidget(self.lbl_filter_status)
+
+        self.combo_status_filter = QComboBox()
+        self.combo_status_filter.setObjectName("comboStatusFilter")
+        self.combo_status_filter.setMinimumWidth(185)
+        self.combo_status_filter.addItem("All Images", userData="all")
+        self.combo_status_filter.addItem("⏳ Pending (To Annotate)", userData="pending")
+        self.combo_status_filter.addItem("🚫 Not Plate (+)", userData="not_plate")
+        self.combo_status_filter.addItem("❓ Cannot Read (-)", userData="cannot_read")
+        self.combo_status_filter.addItem("✅ Approved", userData="approved")
+        self.combo_status_filter.addItem("⚡ AI Diff", userData="ai_diff")
+        self.combo_status_filter.addItem("📑 Duplicates", userData="dup")
+        self.combo_status_filter.currentIndexChanged.connect(self._on_status_filter_changed)
+        h_layout.addWidget(self.combo_status_filter)
+        
+        # Dataset Mode Indicator Badge
+        self.badge_mode = QLabel("🔤 Plate OCR")
+        self.badge_mode.setObjectName("badgeMode")
+        self.badge_mode.setStyleSheet("background-color: #059669; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;")
+        h_layout.addWidget(self.badge_mode)
+
+        # Mode Switch Button
+        self.btn_switch_mode = QPushButton("🔄 Toggle View")
+        self.btn_switch_mode.setObjectName("btnSwitchMode")
+        self.btn_switch_mode.setToolTip("Toggle between YOLO Object Detection View and OCR Plate View")
+        self.btn_switch_mode.clicked.connect(self._on_toggle_view_mode)
+        h_layout.addWidget(self.btn_switch_mode)
         
         # Remove _dup Images Button
         self.btn_clean_dup = QPushButton("🧹 Remove _dup")
@@ -119,9 +168,17 @@ class MainWindow(QMainWindow):
         # Batch AI Read Button
         self.btn_batch_ai = QPushButton("🤖 AI Read All")
         self.btn_batch_ai.setObjectName("btnAiReadAll")
-        self.btn_batch_ai.setToolTip("Run a1.3.4.1 reader across all images in active subfolder or folder")
+        self.btn_batch_ai.setToolTip("Run AI Reader reader across all images in active subfolder or folder")
         self.btn_batch_ai.clicked.connect(self._on_batch_ai_clicked)
         h_layout.addWidget(self.btn_batch_ai)
+
+        # Train Models Studio Button
+        self.btn_train_models = QPushButton("🚀 Train Models")
+        self.btn_train_models.setObjectName("btnTrainModels")
+        self.btn_train_models.setStyleSheet("background-color: #8b5cf6; color: white; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
+        self.btn_train_models.setToolTip("Open Model Training Studio to fine-tune Plate Detector (YOLO) or Plate Reader (OCR)")
+        self.btn_train_models.clicked.connect(self._on_train_models_clicked)
+        h_layout.addWidget(self.btn_train_models)
         
         h_layout.addStretch()
         
@@ -146,12 +203,32 @@ class MainWindow(QMainWindow):
         self.badge_cannot_read.setObjectName("badgeDanger")
         h_layout.addWidget(self.badge_cannot_read)
         
+        # Interactive badge shortcuts to filter list of images
+        for badge, f_code, tip in [
+            (self.badge_total, "all", "Click to filter All Images (Alt+A)"),
+            (self.badge_left, "pending", "Click to filter Pending / Unannotated (Alt+P)"),
+            (self.badge_approved, "approved", "Click to filter Approved Plates"),
+            (self.badge_not_plate, "not_plate", "Click to filter Not Plate [+] (Alt+N)"),
+            (self.badge_cannot_read, "cannot_read", "Click to filter Cannot Read [-] (Alt+D)"),
+        ]:
+            badge.setCursor(Qt.CursorShape.PointingHandCursor)
+            badge.setToolTip(tip)
+            badge.mousePressEvent = lambda event, c=f_code: self._set_status_filter(c)
+        
         # Check Menu Button
         self.btn_check_menu = QPushButton("📋 Check Menu")
         self.btn_check_menu.setObjectName("btnCheckMenu")
         self.btn_check_menu.setToolTip("Open Review List to inspect skipped/approved images and AI differences")
         self.btn_check_menu.clicked.connect(self._on_open_check_menu)
         h_layout.addWidget(self.btn_check_menu)
+
+        # Dataset Staging Button
+        self.btn_export_staging = QPushButton("📦 Stage Approved")
+        self.btn_export_staging.setObjectName("btnExportStaging")
+        self.btn_export_staging.setStyleSheet("background-color: #0d9488; color: white; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
+        self.btn_export_staging.setToolTip("Export/sync all approved plates into dataset staging folder (organized by type_d3_d4_province for reading task) waiting for dataset building")
+        self.btn_export_staging.clicked.connect(self._on_export_staging_clicked)
+        h_layout.addWidget(self.btn_export_staging)
         
         # OWOD Studio Button
         self.btn_owod_studio = QPushButton("⚡ OWOD Studio")
@@ -188,10 +265,16 @@ class MainWindow(QMainWindow):
         p_layout.addWidget(self.lbl_current_status)
         
         # ---------------------------------------------------------------------
-        # AI Reader (a1.3.4.1) & Comparison Box
+        # AI Reader (AI Reader) & Comparison Box
         # ---------------------------------------------------------------------
-        gb_ai = self._create_ai_comparison_box()
-        p_layout.addWidget(gb_ai)
+        self.gb_ai = self._create_ai_comparison_box()
+        p_layout.addWidget(self.gb_ai)
+
+        # ---------------------------------------------------------------------
+        # YOLO Bounding Box Inspector (Object Detection Mode)
+        # ---------------------------------------------------------------------
+        self.gb_yolo_inspector = self._create_yolo_inspector_box()
+        p_layout.addWidget(self.gb_yolo_inspector)
         
         # ---------------------------------------------------------------------
         # Plate Structure Editor
@@ -251,7 +334,8 @@ class MainWindow(QMainWindow):
         grid.addWidget(lbl_province, 4, 0)
         grid.addWidget(self.combo_province, 4, 1)
         
-        p_layout.addWidget(gb_edit)
+        self.gb_plate_info = gb_edit
+        p_layout.addWidget(self.gb_plate_info)
         
         # File Manage Row (Rename & Delete)
         file_actions_box = QHBoxLayout()
@@ -273,6 +357,22 @@ class MainWindow(QMainWindow):
         lbl_actions = QLabel("Quick Actions:")
         lbl_actions.setStyleSheet("font-weight: bold; color: #a0a0b0; margin-top: 4px;")
         p_layout.addWidget(lbl_actions)
+
+        # Dataset Staging Checkbox & Folder Link
+        staging_row = QHBoxLayout()
+        self.chk_auto_staging = QCheckBox("Auto-stage Approved")
+        self.chk_auto_staging.setChecked(True)
+        self.chk_auto_staging.setStyleSheet("color: #38bdf8; font-weight: 500; font-size: 11px;")
+        self.chk_auto_staging.setToolTip("Automatically copy approved plates to dataset staging folder (folders named type_d3_d4_province for reading task) upon Approve")
+        self.chk_auto_staging.stateChanged.connect(lambda s: setattr(self.session, "auto_staging", bool(s)))
+        staging_row.addWidget(self.chk_auto_staging)
+        
+        btn_open_staging = QPushButton("📂 Open Staging")
+        btn_open_staging.setStyleSheet("font-size: 11px; padding: 2px 6px; background-color: #334155;")
+        btn_open_staging.setToolTip("Open dataset staging directory in Windows Explorer")
+        btn_open_staging.clicked.connect(self._on_open_staging_folder)
+        staging_row.addWidget(btn_open_staging)
+        p_layout.addLayout(staging_row)
         
         # Correct / Approve Button
         self.btn_approve = QPushButton("✅ Correct / Approve (Enter)")
@@ -323,11 +423,25 @@ class MainWindow(QMainWindow):
         
         p_layout.addLayout(nav_box)
         
+        # Filtered Image List Jump Selector
+        jump_box = QHBoxLayout()
+        jump_box.setSpacing(6)
+        lbl_jump = QLabel("Image List:")
+        lbl_jump.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: bold;")
+        jump_box.addWidget(lbl_jump)
+        
+        self.combo_image_jump = QComboBox()
+        self.combo_image_jump.setObjectName("comboImageJump")
+        self.combo_image_jump.setToolTip("Quickly jump to any image in the current filter list (Not Plate, Cannot Read, etc.)")
+        self.combo_image_jump.currentIndexChanged.connect(self._on_jump_image_selected)
+        jump_box.addWidget(self.combo_image_jump, 1)
+        p_layout.addLayout(jump_box)
+        
         return panel
 
     def _create_ai_comparison_box(self) -> QGroupBox:
-        """Creates the interactive AI Reader (a1.3.4.1) and field comparison widget."""
-        gb_ai = QGroupBox("🤖 AI Reader (a1.3.4.1)")
+        """Creates the interactive AI Reader (AI Reader) and field comparison widget."""
+        gb_ai = QGroupBox("🤖 AI Reader (AI Reader)")
         gb_ai.setObjectName("groupBoxAI")
         ai_layout = QVBoxLayout(gb_ai)
         ai_layout.setContentsMargins(12, 10, 12, 10)
@@ -337,14 +451,14 @@ class MainWindow(QMainWindow):
         ai_top = QHBoxLayout()
         self.chk_auto_ai = QCheckBox("Auto AI Read")
         self.chk_auto_ai.setChecked(True)
-        self.chk_auto_ai.setToolTip("Automatically run a1.3.4.1 model on each image change")
+        self.chk_auto_ai.setToolTip("Automatically run AI Reader model on each image change")
         ai_top.addWidget(self.chk_auto_ai)
         
         ai_top.addStretch()
         
         self.btn_ai_read = QPushButton("⚡ Read Plate")
         self.btn_ai_read.setObjectName("btnAiRead")
-        self.btn_ai_read.setToolTip("Run a1.3.4.1 inference on current image crop")
+        self.btn_ai_read.setToolTip("Run AI Reader inference on current image crop")
         self.btn_ai_read.clicked.connect(self._on_manual_ai_read_clicked)
         ai_top.addWidget(self.btn_ai_read)
         
@@ -369,7 +483,7 @@ class MainWindow(QMainWindow):
         lbl_h_field.setStyleSheet(hdr_style)
         lbl_h_curr = QLabel("Current")
         lbl_h_curr.setStyleSheet(hdr_style)
-        lbl_h_ai = QLabel("AI (a1.3.4.1)")
+        lbl_h_ai = QLabel("AI (AI Reader)")
         lbl_h_ai.setStyleSheet(hdr_style)
         lbl_h_act = QLabel("Action")
         lbl_h_act.setStyleSheet(hdr_style)
@@ -467,6 +581,576 @@ class MainWindow(QMainWindow):
         
         return gb_ai
 
+    def _create_yolo_inspector_box(self) -> QGroupBox:
+        """Creates the interactive YOLO Bounding Box & Class inspector widget."""
+        gb = QGroupBox("🎯 YOLO Bounding Box Inspector")
+        gb.setObjectName("groupBoxYolo")
+        y_layout = QVBoxLayout(gb)
+        y_layout.setContentsMargins(12, 12, 12, 12)
+        y_layout.setSpacing(10)
+        
+        # 1. Header with box counter and Save button
+        h_box = QHBoxLayout()
+        self.lbl_yolo_box_count = QLabel("Boxes: 0")
+        self.lbl_yolo_box_count.setStyleSheet("font-weight: bold; color: #38bdf8; font-size: 13px;")
+        h_box.addWidget(self.lbl_yolo_box_count)
+        h_box.addStretch()
+        
+        self.btn_save_boxes = QPushButton("💾 Save Boxes (Ctrl+S)")
+        self.btn_save_boxes.setObjectName("btnSaveBoxes")
+        self.btn_save_boxes.setStyleSheet("background-color: #10b981; color: white; font-weight: bold; padding: 5px 12px; border-radius: 4px;")
+        self.btn_save_boxes.setToolTip("Save bounding boxes to .txt label file (Ctrl+S)")
+        self.btn_save_boxes.clicked.connect(self._on_save_yolo_boxes)
+        h_box.addWidget(self.btn_save_boxes)
+        y_layout.addLayout(h_box)
+        
+        # 2. Table of Bounding Boxes
+        self.table_boxes = QTableWidget()
+        self.table_boxes.setColumnCount(4)
+        self.table_boxes.setHorizontalHeaderLabels(["#", "Class", "Center (cx, cy)", "Size (w × h)"])
+        self.table_boxes.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_boxes.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table_boxes.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_boxes.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_boxes.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_boxes.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table_boxes.setMinimumHeight(130)
+        self.table_boxes.setMaximumHeight(200)
+        self.table_boxes.setStyleSheet("""
+            QTableWidget {
+                background-color: #1e1e2d;
+                color: #f1f5f9;
+                gridline-color: #334155;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                font-size: 11px;
+            }
+            QTableWidget::item:selected {
+                background-color: #3b82f6;
+                color: #ffffff;
+            }
+            QHeaderView::section {
+                background-color: #0f172a;
+                color: #94a3b8;
+                font-weight: bold;
+                padding: 4px;
+                border: none;
+            }
+        """)
+        self.table_boxes.itemSelectionChanged.connect(self._on_table_box_selected)
+        y_layout.addWidget(self.table_boxes)
+        
+        # 3. Selected Box Detail Card (Coordinates & Class editor)
+        sel_card = QFrame()
+        sel_card.setStyleSheet("background-color: #1a1a24; border: 1px solid #374151; border-radius: 6px; padding: 6px;")
+        card_layout = QVBoxLayout(sel_card)
+        card_layout.setContentsMargins(6, 6, 6, 6)
+        card_layout.setSpacing(6)
+        
+        self.lbl_selected_box = QLabel("No box selected (click on box or row)")
+        self.lbl_selected_box.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        card_layout.addWidget(self.lbl_selected_box)
+        
+        # Class selector row
+        row_class = QHBoxLayout()
+        row_class.addWidget(QLabel("Class:"))
+        self.combo_box_class = QComboBox()
+        for cid, cname in sorted(self.session.class_names.items()):
+            self.combo_box_class.addItem(f"{cid}: {cname}", userData=cid)
+        row_class.addWidget(self.combo_box_class, 1)
+        
+        self.btn_apply_class = QPushButton("✏️ Set Class")
+        self.btn_apply_class.setToolTip("Apply chosen class to selected box")
+        self.btn_apply_class.clicked.connect(self._on_apply_class_clicked)
+        row_class.addWidget(self.btn_apply_class)
+        card_layout.addLayout(row_class)
+        
+        # Coordinates grid (cx, cy, w, h)
+        grid_coords = QGridLayout()
+        grid_coords.setSpacing(4)
+        
+        lbl_cx = QLabel("cx:")
+        lbl_cx.setStyleSheet("color: #94a3b8; font-weight: bold;")
+        self.spin_cx = QDoubleSpinBox()
+        self.spin_cx.setRange(0.0, 1.0)
+        self.spin_cx.setDecimals(4)
+        self.spin_cx.setSingleStep(0.005)
+        self.spin_cx.valueChanged.connect(self._on_spin_coords_changed)
+        grid_coords.addWidget(lbl_cx, 0, 0)
+        grid_coords.addWidget(self.spin_cx, 0, 1)
+        
+        lbl_cy = QLabel("cy:")
+        lbl_cy.setStyleSheet("color: #94a3b8; font-weight: bold;")
+        self.spin_cy = QDoubleSpinBox()
+        self.spin_cy.setRange(0.0, 1.0)
+        self.spin_cy.setDecimals(4)
+        self.spin_cy.setSingleStep(0.005)
+        self.spin_cy.valueChanged.connect(self._on_spin_coords_changed)
+        grid_coords.addWidget(lbl_cy, 0, 2)
+        grid_coords.addWidget(self.spin_cy, 0, 3)
+        
+        lbl_w = QLabel("w:")
+        lbl_w.setStyleSheet("color: #94a3b8; font-weight: bold;")
+        self.spin_w = QDoubleSpinBox()
+        self.spin_w.setRange(0.0001, 1.0)
+        self.spin_w.setDecimals(4)
+        self.spin_w.setSingleStep(0.005)
+        self.spin_w.valueChanged.connect(self._on_spin_coords_changed)
+        grid_coords.addWidget(lbl_w, 1, 0)
+        grid_coords.addWidget(self.spin_w, 1, 1)
+        
+        lbl_h = QLabel("h:")
+        lbl_h.setStyleSheet("color: #94a3b8; font-weight: bold;")
+        self.spin_h = QDoubleSpinBox()
+        self.spin_h.setRange(0.0001, 1.0)
+        self.spin_h.setDecimals(4)
+        self.spin_h.setSingleStep(0.005)
+        self.spin_h.valueChanged.connect(self._on_spin_coords_changed)
+        grid_coords.addWidget(lbl_h, 1, 2)
+        grid_coords.addWidget(self.spin_h, 1, 3)
+        
+        card_layout.addLayout(grid_coords)
+        y_layout.addWidget(sel_card)
+        
+        # 4. Action buttons: Add & Delete
+        ctrl_layout = QHBoxLayout()
+        self.btn_add_box = QPushButton("➕ Add Box")
+        self.btn_add_box.setToolTip("Add new bounding box with selected class")
+        self.btn_add_box.clicked.connect(self._on_add_box_clicked)
+        ctrl_layout.addWidget(self.btn_add_box, 1)
+        
+        self.btn_delete_box = QPushButton("🗑️ Delete Box (Del)")
+        self.btn_delete_box.setStyleSheet("background-color: #ef4444; color: white; font-weight: bold;")
+        self.btn_delete_box.setToolTip("Delete selected bounding box [Shortcut: Delete]")
+        self.btn_delete_box.clicked.connect(self._on_delete_box_clicked)
+        ctrl_layout.addWidget(self.btn_delete_box, 1)
+        
+        y_layout.addLayout(ctrl_layout)
+        return gb
+
+    def _on_viewer_box_clicked(self, idx: int):
+        """Called when user clicks directly on a bounding box in the graphics view."""
+        if idx == -1:
+            self.selected_box_index = None
+            if hasattr(self, 'table_boxes'):
+                self.table_boxes.blockSignals(True)
+                self.table_boxes.clearSelection()
+                self.table_boxes.blockSignals(False)
+            self._update_selected_box_card()
+            return
+            
+        self.selected_box_index = idx
+        if hasattr(self, 'table_boxes') and 0 <= idx < self.table_boxes.rowCount():
+            self.table_boxes.blockSignals(True)
+            self.table_boxes.selectRow(idx)
+            self.table_boxes.blockSignals(False)
+        self._update_selected_box_card()
+        item = self.session.get_current_item()
+        if item and 0 <= idx < len(item.boxes):
+            cname = item.boxes[idx].get("cls_name", "box")
+            self.lbl_status_msg.setText(f"Selected box #{idx + 1} ({cname}). Press Delete to remove.")
+
+    def _on_table_box_selected(self):
+        """Called when user selects a row in the bounding box table."""
+        row = self.table_boxes.currentRow()
+        if row >= 0:
+            self.selected_box_index = row
+            self.image_viewer.select_box(row)
+            self._update_selected_box_card()
+        else:
+            self.selected_box_index = None
+            self.image_viewer.select_box(None)
+            self._update_selected_box_card()
+
+    def _update_selected_box_card(self):
+        """Synchronizes selected box details to the class combo and coordinate spinboxes."""
+        item = self.session.get_current_item()
+        has_sel = (
+            item is not None and
+            self.selected_box_index is not None and
+            0 <= self.selected_box_index < len(item.boxes)
+        )
+        if not has_sel:
+            self.lbl_selected_box.setText("No box selected (click box on image or select row)")
+            self.lbl_selected_box.setStyleSheet("color: #94a3b8; font-size: 11px;")
+            self.btn_delete_box.setEnabled(bool(item and item.boxes))
+            return
+            
+        b = item.boxes[self.selected_box_index]
+        cls_id = int(b.get("cls_id", 0))
+        cls_name = b.get("cls_name", f"Class {cls_id}")
+        cx, cy, w, h = b.get("bbox_norm", (0.5, 0.5, 0.2, 0.2))
+        
+        self.lbl_selected_box.setText(f"Selected: #{self.selected_box_index + 1} - {cls_name}")
+        self.lbl_selected_box.setStyleSheet("color: #38bdf8; font-weight: bold; font-size: 12px;")
+        
+        self.combo_box_class.blockSignals(True)
+        for i in range(self.combo_box_class.count()):
+            if self.combo_box_class.itemData(i) == cls_id:
+                self.combo_box_class.setCurrentIndex(i)
+                break
+        self.combo_box_class.blockSignals(False)
+        
+        self._syncing_coords = True
+        self.spin_cx.setValue(cx)
+        self.spin_cy.setValue(cy)
+        self.spin_w.setValue(w)
+        self.spin_h.setValue(h)
+        self._syncing_coords = False
+        self.btn_delete_box.setEnabled(True)
+
+    def _on_spin_coords_changed(self):
+        """Called when user edits coordinates in the spinboxes."""
+        if getattr(self, '_syncing_coords', False):
+            return
+        item = self.session.get_current_item()
+        if not item or self.selected_box_index is None or not (0 <= self.selected_box_index < len(item.boxes)):
+            return
+            
+        cx = self.spin_cx.value()
+        cy = self.spin_cy.value()
+        w = self.spin_w.value()
+        h = self.spin_h.value()
+        
+        item.boxes[self.selected_box_index]["bbox_norm"] = (cx, cy, w, h)
+        
+        row = self.selected_box_index
+        if hasattr(self, 'table_boxes') and row < self.table_boxes.rowCount():
+            self.table_boxes.blockSignals(True)
+            self.table_boxes.setItem(row, 2, QTableWidgetItem(f"{cx:.3f}, {cy:.3f}"))
+            self.table_boxes.setItem(row, 3, QTableWidgetItem(f"{w:.3f} × {h:.3f}"))
+            self.table_boxes.blockSignals(False)
+            
+        self.image_viewer.set_bounding_boxes(item.boxes)
+        self.image_viewer.select_box(self.selected_box_index)
+
+    def _on_apply_class_clicked(self):
+        """Changes the class of the currently selected box."""
+        item = self.session.get_current_item()
+        if not item or self.selected_box_index is None or not (0 <= self.selected_box_index < len(item.boxes)):
+            QMessageBox.information(self, "No Box Selected", "Please select a bounding box first.")
+            return
+            
+        new_cid = self.combo_box_class.currentData()
+        if new_cid is None:
+            return
+        new_cname = self.session.class_names.get(new_cid, f"Class {new_cid}")
+        
+        item.boxes[self.selected_box_index]["cls_id"] = new_cid
+        item.boxes[self.selected_box_index]["cls_name"] = new_cname
+        item.save_yolo_boxes()
+        
+        self._refresh_yolo_table()
+        self.image_viewer.set_bounding_boxes(item.boxes)
+        self.image_viewer.select_box(self.selected_box_index)
+        self._update_selected_box_card()
+        self.lbl_status_msg.setText(f"Changed box #{self.selected_box_index + 1} class to {new_cname}")
+
+    def _refresh_yolo_table(self):
+        """Populates the YOLO bounding box inspector table for the current image."""
+        item = self.session.get_current_item()
+        if not item or not hasattr(self, 'table_boxes'):
+            return
+            
+        boxes = item.boxes
+        self.lbl_yolo_box_count.setText(f"Boxes: {len(boxes)}")
+        
+        self.table_boxes.blockSignals(True)
+        self.table_boxes.setRowCount(len(boxes))
+        
+        from .image_viewer import DEFAULT_CLASS_COLORS
+        
+        for row, b in enumerate(boxes):
+            cls_id = int(b.get("cls_id", 0))
+            cls_name = b.get("cls_name", f"Class {cls_id}")
+            cx, cy, w, h = b.get("bbox_norm", (0, 0, 0, 0))
+            
+            color = DEFAULT_CLASS_COLORS[cls_id % len(DEFAULT_CLASS_COLORS)]
+            
+            item_num = QTableWidgetItem(f"#{row + 1}")
+            item_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            item_cls = QTableWidgetItem(f"● {cls_name}")
+            item_cls.setForeground(color)
+            item_cls.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            
+            item_center = QTableWidgetItem(f"{cx:.3f}, {cy:.3f}")
+            item_size = QTableWidgetItem(f"{w:.3f} × {h:.3f}")
+            
+            self.table_boxes.setItem(row, 0, item_num)
+            self.table_boxes.setItem(row, 1, item_cls)
+            self.table_boxes.setItem(row, 2, item_center)
+            self.table_boxes.setItem(row, 3, item_size)
+            
+        if self.selected_box_index is not None and 0 <= self.selected_box_index < len(boxes):
+            self.table_boxes.selectRow(self.selected_box_index)
+        self.table_boxes.blockSignals(False)
+        self._update_selected_box_card()
+
+    def _on_delete_box_clicked(self):
+        """Deletes selected box from current image, saves, and updates view."""
+        item = self.session.get_current_item()
+        if not item or not item.boxes:
+            QMessageBox.information(self, "No Boxes", "There are no bounding boxes on this image.")
+            return
+            
+        target_idx = self.selected_box_index
+        if target_idx is None or target_idx < 0 or target_idx >= len(item.boxes):
+            target_idx = self.table_boxes.currentRow()
+            
+        if target_idx is None or target_idx < 0 or target_idx >= len(item.boxes):
+            if len(item.boxes) == 1:
+                target_idx = 0
+            else:
+                QMessageBox.warning(self, "Select Box", "Please click a box on the image or select a row in the table to delete.")
+                return
+                
+        deleted_box = item.boxes.pop(target_idx)
+        self.selected_box_index = None
+        ok = item.save_yolo_boxes()
+        
+        self._refresh_yolo_table()
+        self.image_viewer.set_bounding_boxes(item.boxes)
+        self.image_viewer.select_box(None)
+        self._update_selected_box_card()
+        self._update_ui_state()
+        
+        fname = item.label_path.name if item.label_path else "label file"
+        self.lbl_status_msg.setText(f"Deleted box #{target_idx + 1} ({deleted_box.get('cls_name', 'box')}) and saved {fname}.")
+
+    def _on_add_box_clicked(self):
+        """Adds a new default bounding box to current image and selects it."""
+        item = self.session.get_current_item()
+        if not item:
+            return
+        cls_id = self.combo_box_class.currentData()
+        if cls_id is None:
+            cls_id = 0
+        cls_name = self.session.class_names.get(cls_id, f"Class {cls_id}")
+        new_box = {
+            "cls_id": cls_id,
+            "cls_name": cls_name,
+            "bbox_norm": (0.5000, 0.5000, 0.2000, 0.2000)
+        }
+        item.boxes.append(new_box)
+        new_idx = len(item.boxes) - 1
+        self.selected_box_index = new_idx
+        
+        item.save_yolo_boxes()
+        
+        self._refresh_yolo_table()
+        self.image_viewer.set_bounding_boxes(item.boxes)
+        self.image_viewer.select_box(new_idx)
+        self._update_selected_box_card()
+        self._update_ui_state()
+        self.lbl_status_msg.setText(f"Added new {cls_name} box #{new_idx + 1}. Adjust coordinates or press Delete to remove.")
+
+    def _on_save_yolo_boxes(self):
+        """Saves current bounding boxes to YOLO label file."""
+        item = self.session.get_current_item()
+        if not item:
+            return
+        ok = item.save_yolo_boxes()
+        if ok:
+            fname = item.label_path.name if item.label_path else "label file"
+            self.lbl_status_msg.setText(f"Saved {len(item.boxes)} bounding box(es) to {fname}")
+        else:
+            QMessageBox.critical(self, "Save Error", f"Failed to save bounding boxes to disk.")
+
+    def _refresh_class_filter_combo(self):
+        """Populates class filter dropdown with classes and counts."""
+        if not hasattr(self, 'combo_class_filter'):
+            return
+        self.combo_class_filter.blockSignals(True)
+        self.combo_class_filter.clear()
+        
+        if self.session.dataset_type == "yolo":
+            stats = self.session.get_yolo_stats(self.session.active_subfolder)
+            total = stats["total_images"]
+            self.combo_class_filter.addItem(f"(All Classes) ({total})", userData=-1)
+            
+            for cid, cname in sorted(self.session.class_names.items()):
+                cnt = stats["class_counts"].get(cid, 0)
+                self.combo_class_filter.addItem(f"{cid}: {cname} ({cnt} boxes)", userData=cid)
+                
+            unannotated_cnt = total - stats["images_with_boxes"]
+            if unannotated_cnt > 0:
+                self.combo_class_filter.addItem(f"(No Annotations) ({unannotated_cnt})", userData=-2)
+                
+            if self.session.active_class_filter is not None:
+                for idx in range(self.combo_class_filter.count()):
+                    if self.combo_class_filter.itemData(idx) == self.session.active_class_filter:
+                        self.combo_class_filter.setCurrentIndex(idx)
+                        break
+        self.combo_class_filter.blockSignals(False)
+
+    def _on_class_filter_changed(self, index: int):
+        """Filters images by selected YOLO class."""
+        data = self.combo_class_filter.currentData()
+        self.session.active_class_filter = None if (data is None or data == -1) else data
+        
+        filtered = self.session.get_filtered_indices(self.session.active_subfolder, self.session.active_class_filter, getattr(self.session, "active_status_filter", "all"))
+        if filtered:
+            if self.session.current_index not in filtered:
+                self._show_item_at(filtered[0])
+            else:
+                self._update_ui_state()
+        else:
+            self._update_ui_state()
+
+    def _refresh_status_filter_combo(self):
+        """Populates status filter dropdown with live counts for current subfolder."""
+        if not hasattr(self, 'combo_status_filter'):
+            return
+            
+        active_sf = self.session.active_subfolder
+        stats = self.session.get_stats(active_sf)
+        
+        all_count = stats["total"]
+        pending_count = stats["pending"] + stats["skipped"]
+        not_plate_count = stats["not_plate"]
+        cannot_read_count = stats["cannot_read"]
+        approved_count = stats["approved"]
+        
+        dup_count = sum(1 for it in self.session.items if (not active_sf or active_sf == "(All)" or it.subfolder == active_sf) and ("_dup" in it.filename.lower()))
+        ai_diff_count = sum(1 for it in self.session.items if (not active_sf or active_sf == "(All)" or it.subfolder == active_sf) and it.get_ai_comparison()["has_ai"] and not it.get_ai_comparison()["all_match"])
+        
+        curr_data = self.combo_status_filter.currentData() or getattr(self.session, "active_status_filter", "all") or "all"
+        
+        self.combo_status_filter.blockSignals(True)
+        self.combo_status_filter.clear()
+        self.combo_status_filter.addItem(f"All Images ({all_count:,})", userData="all")
+        self.combo_status_filter.addItem(f"⏳ Pending ({pending_count:,})", userData="pending")
+        self.combo_status_filter.addItem(f"🚫 Not Plate ({not_plate_count:,})", userData="not_plate")
+        self.combo_status_filter.addItem(f"❓ Cannot Read ({cannot_read_count:,})", userData="cannot_read")
+        self.combo_status_filter.addItem(f"✅ Approved ({approved_count:,})", userData="approved")
+        if ai_diff_count > 0:
+            self.combo_status_filter.addItem(f"⚡ AI Diff ({ai_diff_count:,})", userData="ai_diff")
+        if dup_count > 0:
+            self.combo_status_filter.addItem(f"📑 Duplicates ({dup_count:,})", userData="dup")
+            
+        idx = self.combo_status_filter.findData(curr_data)
+        if idx >= 0:
+            self.combo_status_filter.setCurrentIndex(idx)
+        else:
+            self.combo_status_filter.setCurrentIndex(0)
+            self.session.active_status_filter = "all"
+            
+        self.combo_status_filter.blockSignals(False)
+
+    def _on_status_filter_changed(self, index: int):
+        """Filters images to annotate by selected status (e.g. Not Plate, Cannot Read, Pending)."""
+        status_code = self.combo_status_filter.currentData() or "all"
+        self.session.active_status_filter = status_code
+        
+        filtered = self.session.get_filtered_indices(
+            self.session.active_subfolder,
+            self.session.active_class_filter,
+            status_code
+        )
+        
+        if filtered:
+            if self.session.current_index not in filtered:
+                self._show_item_at(filtered[0])
+            else:
+                self._update_ui_state()
+            filter_text = self.combo_status_filter.currentText()
+            self.lbl_status_msg.setText(f"Filter active: {filter_text} ({len(filtered)} images)")
+        else:
+            self._update_ui_state()
+            self.lbl_status_msg.setText(f"No images found for filter: {self.combo_status_filter.currentText()}")
+
+    def _set_status_filter(self, filter_code: str):
+        """Programmatically sets the status filter dropdown and applies filter."""
+        if not hasattr(self, 'combo_status_filter'):
+            return
+        idx = self.combo_status_filter.findData(filter_code)
+        if idx >= 0:
+            self.combo_status_filter.setCurrentIndex(idx)
+
+    def _update_image_jump_combo(self, filtered: Optional[List[int]] = None, curr_idx: Optional[int] = None):
+        """Populates image jump dropdown with list of images matching current filter."""
+        if not hasattr(self, 'combo_image_jump'):
+            return
+            
+        if filtered is None:
+            active_sf = self.session.active_subfolder
+            active_cf = self.session.active_class_filter
+            active_st = getattr(self.session, "active_status_filter", "all")
+            filtered = self.session.get_filtered_indices(active_sf, active_cf, active_st)
+            
+        if curr_idx is None:
+            curr_idx = self.session.current_index
+
+        self.combo_image_jump.blockSignals(True)
+        self.combo_image_jump.clear()
+        
+        if not filtered:
+            self.combo_image_jump.addItem("(No images in filter)", userData=-1)
+            self.combo_image_jump.setEnabled(False)
+            self.combo_image_jump.blockSignals(False)
+            return
+            
+        self.combo_image_jump.setEnabled(True)
+        current_combo_idx = 0
+        
+        for pos, i in enumerate(filtered, start=1):
+            it = self.session.items[i]
+            st_icon = "🚫" if it.status == "not_plate" else ("❓" if it.status == "cannot_read" else ("✅" if it.status == "approved" else "⏳"))
+            label = f"{pos}. {it.filename} {st_icon}"
+            self.combo_image_jump.addItem(label, userData=i)
+            if i == curr_idx:
+                current_combo_idx = pos - 1
+                
+        self.combo_image_jump.setCurrentIndex(current_combo_idx)
+        self.combo_image_jump.blockSignals(False)
+
+    def _on_jump_image_selected(self, index: int):
+        """Jumps directly to selected image from the filtered image list."""
+        target_idx = self.combo_image_jump.currentData()
+        if target_idx is not None and target_idx >= 0 and target_idx != self.session.current_index:
+            self._show_item_at(target_idx)
+
+    def _on_toggle_view_mode(self):
+        """Toggles between YOLO Object Detection Mode and Plate OCR Mode."""
+        self.session.dataset_type = "ocr" if self.session.dataset_type == "yolo" else "yolo"
+        self._apply_dataset_mode_ui()
+        self._update_ui_state()
+        if self.session.items:
+            self._show_item_at(self.session.current_index)
+
+    def _apply_dataset_mode_ui(self):
+        """Updates UI layout visibility based on YOLO vs OCR mode."""
+        is_yolo = (self.session.dataset_type == "yolo")
+        self.badge_mode.setText("🎯 YOLO Detection" if is_yolo else "🔤 Plate OCR")
+        self.badge_mode.setStyleSheet(
+            "background-color: #0284c7; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;"
+            if is_yolo else
+            "background-color: #059669; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;"
+        )
+        self.combo_class_filter.setVisible(is_yolo)
+        self.lbl_filter_class.setVisible(is_yolo)
+        self.combo_status_filter.setVisible(not is_yolo)
+        self.lbl_filter_status.setVisible(not is_yolo)
+        self.gb_yolo_inspector.setVisible(is_yolo)
+        
+        self.gb_plate_info.setVisible(not is_yolo)
+        self.gb_ai.setVisible(not is_yolo)
+        self.btn_clean_dup.setVisible(not is_yolo)
+        self.btn_batch_ai.setVisible(not is_yolo)
+        self.btn_not_plate.setVisible(not is_yolo)
+        self.btn_cannot_read.setVisible(not is_yolo)
+        
+        if is_yolo:
+            self.btn_approve.setText("💾 Save Bounding Boxes (Enter)")
+        else:
+            self.btn_approve.setText("✅ Correct / Approve (Enter)")
+
+    def _on_train_models_clicked(self):
+        """Opens the Model Training Studio dialog."""
+        dlg = TrainingDialog(self)
+        dlg.exec()
+
     def _create_bottom_bar(self) -> QWidget:
         bar = QWidget(self)
         b_layout = QHBoxLayout(bar)
@@ -494,10 +1178,31 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+R"), self, self._on_replace_all_ai)
         QShortcut(QKeySequence("Ctrl+N"), self, self._on_not_plate_clicked)
         QShortcut(QKeySequence("Ctrl+D"), self, self._on_cannot_read_clicked)
-        QShortcut(QKeySequence("Ctrl+S"), self, self._on_skip_clicked)
-        QShortcut(QKeySequence("Delete"), self, self._on_delete_clicked)
+        QShortcut(QKeySequence("Ctrl+S"), self, self._on_ctrl_s_pressed)
+        QShortcut(QKeySequence("Delete"), self, self._on_delete_key_pressed)
         QShortcut(QKeySequence("Ctrl+Delete"), self, self._on_delete_clicked)
         QShortcut(QKeySequence("F2"), self, self._on_rename_clicked)
+        QShortcut(QKeySequence("B"), self, self.image_viewer.btn_toggle_boxes.click)
+        QShortcut(QKeySequence("L"), self, self.image_viewer.btn_toggle_labels.click)
+        QShortcut(QKeySequence("Ctrl+T"), self, self._on_train_models_clicked)
+        QShortcut(QKeySequence("Alt+N"), self, lambda: self._set_status_filter("not_plate"))
+        QShortcut(QKeySequence("Alt+D"), self, lambda: self._set_status_filter("cannot_read"))
+        QShortcut(QKeySequence("Alt+P"), self, lambda: self._set_status_filter("pending"))
+        QShortcut(QKeySequence("Alt+A"), self, lambda: self._set_status_filter("all"))
+
+    def _on_ctrl_s_pressed(self):
+        """Ctrl+S saves bounding boxes in YOLO mode, or skips in OCR mode."""
+        if self.session.dataset_type == "yolo":
+            self._on_save_yolo_boxes()
+        else:
+            self._on_skip_clicked()
+
+    def _on_delete_key_pressed(self):
+        """Delete key removes selected bounding box in YOLO mode, or prompts image delete in OCR mode."""
+        if self.session.dataset_type == "yolo":
+            self._on_delete_box_clicked()
+        else:
+            self._on_delete_clicked()
 
     def _on_open_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Images Folder")
@@ -510,6 +1215,9 @@ class MainWindow(QMainWindow):
             return
             
         self._refresh_subfolder_combo()
+        self._refresh_class_filter_combo()
+        self._refresh_status_filter_combo()
+        self._apply_dataset_mode_ui()
         
         if not self.session.items:
             self.image_viewer.clear()
@@ -518,7 +1226,8 @@ class MainWindow(QMainWindow):
             return
             
         self._show_item_at(self.session.current_index)
-        self.lbl_status_msg.setText(f"Folder loaded with {len(self.session.items)} images. Resumed at #{self.session.current_index + 1}.")
+        mode_str = "YOLO Object Detection Mode" if self.session.dataset_type == "yolo" else "OCR Plate Mode"
+        self.lbl_status_msg.setText(f"Folder loaded with {len(self.session.items)} images [{mode_str}]. Resumed at #{self.session.current_index + 1}.")
 
     def _refresh_subfolder_combo(self):
         self.combo_subfolder.blockSignals(True)
@@ -542,14 +1251,19 @@ class MainWindow(QMainWindow):
         data = self.combo_subfolder.currentData()
         self.session.active_subfolder = None if data == "(All)" else data
         
+        self._refresh_status_filter_combo()
+        self._refresh_class_filter_combo()
+        
         # Jump to first item in this subfolder if current item doesn't belong to it
         curr = self.session.get_current_item()
-        filtered = self.session.get_filtered_indices(self.session.active_subfolder)
+        filtered = self.session.get_filtered_indices(self.session.active_subfolder, self.session.active_class_filter, getattr(self.session, "active_status_filter", "all"))
         if filtered:
             if not curr or self.session.current_index not in filtered:
                 self._show_item_at(filtered[0])
             else:
                 self._update_ui_state()
+        else:
+            self._update_ui_state()
 
     def _show_item_at(self, index: int):
         if not (0 <= index < len(self.session.items)):
@@ -560,6 +1274,17 @@ class MainWindow(QMainWindow):
         
         # Load image into viewer
         self.image_viewer.load_image(str(item.path))
+
+        # Reset selection state
+        self.selected_box_index = None
+
+        # Render bounding boxes if in YOLO mode or item has boxes
+        if self.session.dataset_type == "yolo" or item.boxes:
+            self.image_viewer.set_bounding_boxes(item.boxes)
+            self.image_viewer.select_box(None)
+            self._refresh_yolo_table()
+        else:
+            self.image_viewer.clear_bounding_boxes()
         
         # Update Form Fields (block signals temporarily to prevent loop)
         self.txt_d3.blockSignals(True)
@@ -585,19 +1310,18 @@ class MainWindow(QMainWindow):
         # Update Stats & Progress
         self._update_ui_state()
         
-        # Run or refresh AI prediction and comparison
-        self._update_ai_prediction_for_item(item)
-        
-        # Focus d3 for quick editing
-        self.txt_d3.setFocus()
-        self.txt_d3.selectAll()
+        # Mode-specific focus & AI handling
+        if self.session.dataset_type == "ocr":
+            self._update_ai_prediction_for_item(item)
+            self.txt_d3.setFocus()
+            self.txt_d3.selectAll()
 
     # -------------------------------------------------------------------------
-    # AI Reader (a1.3.4.1) Execution & Live Comparison
+    # AI Reader (AI Reader) Execution & Live Comparison
     # -------------------------------------------------------------------------
 
     def _update_ai_prediction_for_item(self, item: ImageItem):
-        """Checks for existing AI prediction or triggers a1.3.4.1 inference."""
+        """Checks for existing AI prediction or triggers AI Reader inference."""
         if item.ai_d3 or item.ai_d4 or item.ai_province:
             # Use cached prediction on item
             self._latest_ai_d3 = item.ai_d3
@@ -624,7 +1348,7 @@ class MainWindow(QMainWindow):
             self._active_worker.cancel()
             self._active_worker.wait(300)
             
-        self.lbl_ai_status.setText("AI Status: Running a1.3.4.1 inference...")
+        self.lbl_ai_status.setText("AI Status: Running AI Reader inference...")
         self.lbl_ai_status.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: bold;")
         self.lbl_comp_ai_d3.setText("...")
         self.lbl_comp_ai_d4.setText("...")
@@ -805,7 +1529,7 @@ class MainWindow(QMainWindow):
         self._refresh_comparison_view()
 
     def _on_batch_ai_clicked(self):
-        """Runs a1.3.4.1 reader across all images in active subfolder or folder."""
+        """Runs AI Reader reader across all images in active subfolder or folder."""
         if not self.session.items:
             QMessageBox.information(self, "No Images", "Please open an images folder first.")
             return
@@ -819,7 +1543,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Run Batch AI Reader",
-            f"Run a1.3.4.1 AI Reader on {len(indices)} image(s) in "
+            f"Run AI Reader AI Reader on {len(indices)} image(s) in "
             f"{'All Subfolders' if not active_sf or active_sf == '(All)' else active_sf}?\n\n"
             f"Predictions will be stored for instant review and comparison.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -830,8 +1554,8 @@ class MainWindow(QMainWindow):
             
         items_to_read = [(idx, str(self.session.items[idx].path)) for idx in indices]
         
-        dlg = QProgressDialog("Initializing AI Reader (a1.3.4.1)...", "Cancel", 0, len(items_to_read), self)
-        dlg.setWindowTitle("Batch AI Reader (a1.3.4.1)")
+        dlg = QProgressDialog("Initializing AI Reader (AI Reader)...", "Cancel", 0, len(items_to_read), self)
+        dlg.setWindowTitle("Batch AI Reader (AI Reader)")
         dlg.setWindowModality(Qt.WindowModality.WindowModal)
         dlg.setMinimumDuration(0)
         dlg.resize(450, 130)
@@ -858,7 +1582,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Batch AI Reader Complete",
-                f"Successfully inferred a1.3.4.1 reader on {completed} image(s)!\n\n"
+                f"Successfully inferred AI Reader reader on {completed} image(s)!\n\n"
                 f"Use 'Check Menu' or navigate to review and approve predictions."
             )
             
@@ -886,53 +1610,101 @@ class MainWindow(QMainWindow):
 
     def _update_ui_state(self):
         active_sf = self.session.active_subfolder
-        stats = self.session.get_stats(active_sf)
-        total = stats["total"]
-        
-        self.badge_total.setText(f"Total: {total}")
-        self.badge_left.setText(f"Left: {stats['left']}")
-        self.badge_approved.setText(f"Approved: {stats['approved']}")
-        self.badge_not_plate.setText(f"Not Plate: {stats['not_plate']}")
-        self.badge_cannot_read.setText(f"Cannot Read: {stats['cannot_read']}")
-        
-        filtered = self.session.get_filtered_indices(active_sf)
+        active_cf = self.session.active_class_filter
+        active_st = getattr(self.session, "active_status_filter", "all")
+        filtered = self.session.get_filtered_indices(active_sf, active_cf, active_st)
         curr_idx = self.session.current_index
+        
+        if self.session.dataset_type == "yolo":
+            stats = self.session.get_yolo_stats(active_sf)
+            self.badge_total.setText(f"Images: {stats['total_images']}")
+            self.badge_left.setText(f"Filtered: {len(filtered)}")
+            self.badge_approved.setText(f"Total Boxes: {stats['total_boxes']}")
+            self.badge_not_plate.setText(f"With Boxes: {stats['images_with_boxes']}")
+            self.badge_cannot_read.setText(f"Classes: {len(self.session.class_names)}")
+        else:
+            stats = self.session.get_stats(active_sf)
+            total = stats["total"]
+            self.badge_total.setText(f"Total: {total}")
+            self.badge_left.setText(f"Left: {stats['left']}")
+            self.badge_approved.setText(f"Approved: {stats['approved']}")
+            self.badge_not_plate.setText(f"Not Plate: {stats['not_plate']}")
+            self.badge_cannot_read.setText(f"Cannot Read: {stats['cannot_read']}")
         
         if filtered and curr_idx in filtered:
             pos = filtered.index(curr_idx) + 1
             sf_label = f" ({active_sf})" if active_sf and active_sf != "(All)" else ""
-            self.lbl_nav_counter.setText(f"{pos} / {len(filtered)}{sf_label}")
-            pct = int((stats["processed"] / total) * 100) if total > 0 else 0
+            cf_label = f" [{self.session.class_names.get(active_cf, 'Class')}]" if active_cf is not None and active_cf >= 0 else ""
+            st_map = {
+                "not_plate": " [Not Plate 🚫]",
+                "cannot_read": " [Cannot Read ❓]",
+                "pending": " [Pending ⏳]",
+                "approved": " [Approved ✅]",
+                "ai_diff": " [AI Diff ⚡]",
+                "dup": " [Duplicates 📑]",
+            }
+            st_label = st_map.get(active_st, "")
+            self.lbl_nav_counter.setText(f"{pos} / {len(filtered)}{sf_label}{cf_label}{st_label}")
+            pct = int((pos / len(filtered)) * 100) if filtered else 0
             self.progress_bar.setValue(pct)
-            self.progress_bar.setFormat(f"{pct}% ({stats['processed']}/{total} done, {stats['left']} left)")
+            self.progress_bar.setFormat(f"{pct}% ({pos}/{len(filtered)})")
+        elif filtered:
+            st_map = {
+                "not_plate": " [Not Plate 🚫]",
+                "cannot_read": " [Cannot Read ❓]",
+                "pending": " [Pending ⏳]",
+                "approved": " [Approved ✅]",
+                "ai_diff": " [AI Diff ⚡]",
+                "dup": " [Duplicates 📑]",
+            }
+            st_label = st_map.get(active_st, "")
+            self.lbl_nav_counter.setText(f"0 / {len(filtered)}{st_label}")
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat(f"0 / {len(filtered)}")
         else:
             self.lbl_nav_counter.setText("0 / 0")
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat("0%")
             
-        self.btn_back.setEnabled(len(filtered) > 1 and curr_idx != filtered[0])
-        self.btn_next.setEnabled(len(filtered) > 1 and curr_idx != filtered[-1])
+        self.btn_back.setEnabled(len(filtered) > 1 and curr_idx in filtered and curr_idx != filtered[0])
+        self.btn_next.setEnabled(len(filtered) > 1 and curr_idx in filtered and curr_idx != filtered[-1])
+        
+        self._update_image_jump_combo(filtered, curr_idx)
 
     def _on_approve_clicked(self):
         if not self.session.items:
             return
             
         idx = self.session.current_index
-        name = self.txt_name.text()
-        plate_type = self.combo_plate_type.get_plate_type_value()
-        d3 = self.txt_d3.text()
-        d4 = self.txt_d4.text()
-        province = self.combo_province.get_province_value()
+        item = self.session.items[idx]
         
-        self.session.approve_and_save(idx, name, plate_type, d3, d4, province)
-        self.lbl_status_msg.setText(f"Saved & Approved image #{idx + 1}")
+        if self.session.dataset_type == "yolo":
+            item.save_yolo_boxes()
+            if getattr(self, "chk_auto_staging", None) and self.chk_auto_staging.isChecked():
+                self.session.add_to_staging(item)
+            self.lbl_status_msg.setText(f"Saved bounding boxes for #{idx + 1}: {item.filename}")
+        else:
+            name = self.txt_name.text()
+            plate_type = self.combo_plate_type.get_plate_type_value()
+            d3 = self.txt_d3.text()
+            d4 = self.txt_d4.text()
+            province = self.combo_province.get_province_value()
+            self.session.approve_and_save(idx, name, plate_type, d3, d4, province)
+            if item.status == "approved":
+                self.lbl_status_msg.setText(f"Approved #{idx + 1} -> Staged to: {plate_type}_{d3}_{d4}_{province}/")
+            else:
+                self.lbl_status_msg.setText(f"Saved #{idx + 1}: {item.status}")
         
-        next_idx = self.session.get_next_index(idx, self.session.active_subfolder)
+        active_sf = self.session.active_subfolder
+        active_cf = self.session.active_class_filter
+        active_st = getattr(self.session, "active_status_filter", "all")
+        next_idx = self.session.get_next_index(idx, active_sf, active_cf, active_st)
+        self._refresh_status_filter_combo()
         if next_idx is not None and next_idx != idx:
             self._show_item_at(next_idx)
         else:
             self._show_item_at(idx)
-            self.lbl_status_msg.setText("Reached last image in folder!")
+            self.lbl_status_msg.setText("Reached last image in current filter!")
 
     def _on_not_plate_clicked(self):
         if not self.session.items:
@@ -962,19 +1734,29 @@ class MainWindow(QMainWindow):
         self.session.mark_skipped(idx)
         self.lbl_status_msg.setText(f"Skipped image #{idx + 1}")
         
-        next_idx = self.session.get_next_index(idx, self.session.active_subfolder)
+        active_sf = self.session.active_subfolder
+        active_cf = self.session.active_class_filter
+        active_st = getattr(self.session, "active_status_filter", "all")
+        next_idx = self.session.get_next_index(idx, active_sf, active_cf, active_st)
+        self._refresh_status_filter_combo()
         if next_idx is not None and next_idx != idx:
             self._show_item_at(next_idx)
         else:
             self._show_item_at(idx)
 
     def _on_back_clicked(self):
-        prev_idx = self.session.get_prev_index(self.session.current_index, self.session.active_subfolder)
+        active_sf = self.session.active_subfolder
+        active_cf = self.session.active_class_filter
+        active_st = getattr(self.session, "active_status_filter", "all")
+        prev_idx = self.session.get_prev_index(self.session.current_index, active_sf, active_cf, active_st)
         if prev_idx is not None and prev_idx != self.session.current_index:
             self._show_item_at(prev_idx)
 
     def _on_next_clicked(self):
-        next_idx = self.session.get_next_index(self.session.current_index, self.session.active_subfolder)
+        active_sf = self.session.active_subfolder
+        active_cf = self.session.active_class_filter
+        active_st = getattr(self.session, "active_status_filter", "all")
+        next_idx = self.session.get_next_index(self.session.current_index, active_sf, active_cf, active_st)
         if next_idx is not None and next_idx != self.session.current_index:
             self._show_item_at(next_idx)
 
@@ -1014,8 +1796,13 @@ class MainWindow(QMainWindow):
             idx = self.session.current_index
             if self.session.delete_item(idx):
                 self._refresh_subfolder_combo()
+                self._refresh_status_filter_combo()
                 if self.session.items:
-                    filtered = self.session.get_filtered_indices(self.session.active_subfolder)
+                    filtered = self.session.get_filtered_indices(
+                        self.session.active_subfolder,
+                        self.session.active_class_filter,
+                        getattr(self.session, "active_status_filter", "all")
+                    )
                     next_target = idx if idx in filtered else (filtered[0] if filtered else 0)
                     self._show_item_at(min(next_target, len(self.session.items) - 1))
                 else:
@@ -1061,7 +1848,45 @@ class MainWindow(QMainWindow):
         dialog.image_deleted.connect(lambda idx: self._show_item_at(min(self.session.current_index, len(self.session.items) - 1)) if self.session.items else self.image_viewer.clear())
         dialog.exec()
         self._refresh_subfolder_combo()
+        self._refresh_status_filter_combo()
         self._update_ui_state()
+
+    def _on_export_staging_clicked(self):
+        """Exports all approved images to dataset staging directory."""
+        if not self.session.items:
+            QMessageBox.information(self, "No Images", "Please open an images folder first.")
+            return
+
+        active_sf = self.session.active_subfolder
+        count, staging_dir = self.session.export_all_approved_to_staging(active_sf)
+        sf_str = f" in folder '{active_sf}'" if active_sf and active_sf != "(All)" else ""
+
+        self.lbl_status_msg.setText(f"Staged {count} approved plate(s) into {staging_dir.name}/")
+        
+        box = QMessageBox(self)
+        box.setWindowTitle("Dataset Staging Complete")
+        box.setText(
+            f"Successfully staged {count} approved plate(s){sf_str} into:\n"
+            f"{staging_dir}\n\n"
+            f"License plates for reading task are stored in folders named:\n"
+            f"  {{type}}_{{d3}}_{{d4}}_{{province}}\n\n"
+            f"These images are organized and waiting for building dataset."
+        )
+        btn_open = box.addButton("Open Staging Folder", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        box.exec()
+        if box.clickedButton() == btn_open:
+            self._on_open_staging_folder()
+
+    def _on_open_staging_folder(self):
+        """Opens staging folder in file explorer."""
+        staging_dir = self.session.staging_dir
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        import os
+        try:
+            os.startfile(str(staging_dir))
+        except Exception as e:
+            QMessageBox.warning(self, "Open Folder Error", f"Could not open {staging_dir}: {e}")
 
     def _on_open_owod_studio(self):
         try:
@@ -1337,6 +2162,9 @@ class MainWindow(QMainWindow):
                 border-radius: 4px;
                 font-weight: bold;
                 font-size: 12px;
+            }
+            #badgeNeutral:hover, #badgeWarning:hover, #badgeSuccess:hover, #badgeBlue:hover, #badgeDanger:hover {
+                border: 1px solid #ffffff;
             }
             #appProgressBar {
                 background-color: #262634;

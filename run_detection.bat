@@ -16,7 +16,9 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 REM Run detection on CAM01 current folder with auto-tracking
-%PYTHON_EXE% tools\detect_cam_videos.py --input-dir "dataset\Raw Video Record\CAM01\2026\10\19" %*
+set "CAM01_DIR=dataset\raw\Raw Video Record\CAM01\2026\10\19"
+if not exist "%CAM01_DIR%" set "CAM01_DIR=dataset\Raw Video Record\CAM01\2026\10\19"
+%PYTHON_EXE% tools\detect_cam_videos.py --input-dir "%CAM01_DIR%" %*
 
 echo.
 echo [DONE] Processing finished.

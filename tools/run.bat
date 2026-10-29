@@ -13,17 +13,37 @@ if exist "%~dp0..\.venv\Scripts\python.exe" (
 echo ========================================================
 echo   Thai LPR and OWOD License Plate Studio
 echo ========================================================
+echo   [0] Launch Real-Time Thai LPR Demo (Webcam / RTSP / Video)
 echo   [1] Launch OWOD Studio GUI (Auto-Labeling and YOLO Pruning)
 echo   [2] Auto-Run OWOD on all data in 'dataset' folder (GPU Batch)
 echo   [3] Launch Thai LPR Dataset Annotator and Reviewer
 echo   [4] Launch ISO-Standard RTSP Stream Collector
 echo   [5] Run CAM01 Video Detection and Tracking Runner
 echo   [6] Run ISO Compliance and Quality Test Suite
+echo   [7] Train Plate Detector ^& Vehicle Classifier (YOLO)
+echo   [8] Train Thai Plate Reader OCR (VisionAttentionOCR)
+echo   [9] Run Batch LPR Video Tracking ^& Snapshot Extractor
+echo   [10] Launch Plate Augmentor GUI (Synthetic Plates ^& Augmentations)
 echo ========================================================
-set "choice=1"
-set /p choice="Select tool [1-6] (Default 1): "
+set "choice=0"
+set /p choice="Select tool [0-10] (Default 0): "
 
-if "%choice%"=="6" (
+if "%choice%"=="10" (
+    cd /d "%~dp0PlateAugmentor"
+    "%PYTHON_EXE%" main.py
+) else if "%choice%"=="0" (
+    cd /d "%~dp0.."
+    call run_demo_realtime.bat
+) else if "%choice%"=="9" (
+    cd /d "%~dp0.."
+    call run_track_lpr.bat
+) else if "%choice%"=="8" (
+    cd /d "%~dp0.."
+    call train_reader.bat
+) else if "%choice%"=="7" (
+    cd /d "%~dp0.."
+    call train_detector.bat
+) else if "%choice%"=="6" (
     cd /d "%~dp0.."
     call run_tests.bat
 ) else if "%choice%"=="5" (

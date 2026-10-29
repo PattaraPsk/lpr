@@ -37,6 +37,12 @@ from tools.detect_cam_videos import (
 )
 from tools.rtsp_collector.security import mask_rtsp_url
 from tools.owod.core.quality_auditor import audit_dataset, calculate_file_sha256
+from tools.iso42001_logger import (
+    validate_changelog_compliance,
+    get_iso_logger,
+    parse_changelog_entries,
+    CHANGELOG_PATH,
+)
 
 
 class TestISO3166AndUnicode(unittest.TestCase):
@@ -185,8 +191,41 @@ class TestAIModelGovernance(unittest.TestCase):
         self.assertTrue(catalog_path.is_file(), "models/MODEL_CATALOG.md must exist")
         content = catalog_path.read_text(encoding="utf-8")
         self.assertIn("ISO/IEC 42001", content)
-        self.assertIn("front-rear-lpr-yolov11n", content)
-        self.assertIn("thai-lpr-reader-a1.3.4.1", content)
+        self.assertIn("vehicle-plate-detector-yolov11n", content)
+        self.assertIn("thai-lpr-reader", content)
+
+    def test_iso42001_changelog_exists_and_compliant(self):
+        """Verifies CHANGELOG.md exists and strictly adheres to ISO/IEC 42001:2023 schema."""
+        self.assertTrue(CHANGELOG_PATH.is_file(), "CHANGELOG.md must exist at root")
+        is_compliant, issues = validate_changelog_compliance(CHANGELOG_PATH)
+        self.assertTrue(
+            is_compliant,
+            f"CHANGELOG.md failed ISO/IEC 42001:2023 compliance check: {issues}"
+        )
+
+    def test_iso42001_event_logger_formatting(self):
+        """Verifies structured event logger emits ISO 8601 UTC timestamps according to Annex A.9.3."""
+        import io
+        import logging
+        test_logger = get_iso_logger("TestLogger")
+        string_stream = io.StringIO()
+        test_handler = logging.StreamHandler(string_stream)
+        test_handler.setFormatter(test_logger.handlers[0].formatter)
+        test_logger.addHandler(test_handler)
+        test_logger.info("Test ISO 42001 operational log entry")
+        log_output = string_stream.getvalue()
+        self.assertIn("[AIMS:A.9.3]", log_output)
+        self.assertIn("Test ISO 42001 operational log entry", log_output)
+        # Check ISO 8601 timestamp (e.g., 2026-10-27T...Z)
+        self.assertRegex(log_output, r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+
+    def test_iso42001_agents_rule_mandate(self):
+        """Verifies AGENTS.md explicitly enforces ISO 42001 change logging."""
+        agents_path = PROJECT_ROOT / "AGENTS.md"
+        self.assertTrue(agents_path.is_file())
+        content = agents_path.read_text(encoding="utf-8")
+        self.assertIn("ISO/IEC 42001:2023", content)
+        self.assertIn("CHANGELOG.md", content)
 
 
 if __name__ == "__main__":

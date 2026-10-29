@@ -1,5 +1,5 @@
 """
-Thai License Plate OCR Reader using Model a1.3.4.1 (Pure PyTorch VisionAttentionOCR).
+Thai License Plate OCR Reader using Edge VisionAttentionOCR.
 Extracts d3 (category letters/prefix), d4 (digits), and province with comparison and replacement helpers.
 """
 
@@ -164,7 +164,7 @@ if HAS_TORCH:
     class VisionAttentionOCR(nn.Module):
         """
         Pure PyTorch Standalone OCR Model (GRCNN + BiLSTM + Attention Decoder).
-        Compatible with a1.3.4.1 checkpoint weights.
+        Compatible with edge_reader checkpoint weights.
         """
         def __init__(self, num_classes: int = 187, input_channel: int = 1, output_channel: int = 512, hidden_size: int = 512, batch_max_length: int = 25):
             super().__init__()
@@ -187,7 +187,7 @@ if HAS_TORCH:
 
 
 # =============================================================================
-# Authentic 187-Class Decoding List for a1.3.4.1
+# Authentic 187-Class Decoding List for edge_reader
 # =============================================================================
 
 EASYOCR_DECODING_LIST: List[str] = [
@@ -330,12 +330,16 @@ class PlateReader:
         if explicit_path and Path(explicit_path).is_file():
             return Path(explicit_path).resolve()
 
-        # Potential paths to a1.3.4.1 best_norm_ED.pth
+        # Potential paths to fine-tuned fine_tuned_edge_reader best_reader.pth, with fallback to edge_reader
         app_dir = Path(__file__).resolve().parent
         candidates = [
-            app_dir.parents[2] / "models" / "reader" / "a1.3.4.1" / "best_norm_ED.pth",
-            app_dir.parents[1] / "models" / "reader" / "a1.3.4.1" / "best_norm_ED.pth",
-            Path("models/reader/a1.3.4.1/best_norm_ED.pth"),
+            app_dir.parents[2] / "models" / "reader" / "fine_tuned_edge_reader" / "best_reader.pth",
+            app_dir.parents[2] / "runs" / "train" / "reader" / "best_reader.pth",
+            Path("models/reader/fine_tuned_edge_reader/best_reader.pth"),
+            Path("runs/train/reader/best_reader.pth"),
+            app_dir.parents[2] / "models" / "reader" / "edge_reader" / "best_norm_ED.pth",
+            app_dir.parents[1] / "models" / "reader" / "edge_reader" / "best_norm_ED.pth",
+            Path("models/reader/edge_reader/best_norm_ED.pth"),
             Path("models/reader/thai_plate_reader.pth"),
             Path("best_norm_ED.pth"),
             app_dir.parents[2] / "archive" / "models" / "ocr" / "thai_plate_attn_ocr.pt",
@@ -361,7 +365,7 @@ class PlateReader:
             self.error_msg = f"Failed to load weights from {self.weights_path}: {e}"
 
     def preprocess_image(self, pil_img: Image.Image) -> torch.Tensor:
-        """Authentic NormalizePAD transform matching a1.3.4.1."""
+        """Authentic NormalizePAD transform matching edge_reader."""
         gray = pil_img.convert("L")
         w, h = gray.size
         ratio = w / float(max(h, 1))
@@ -380,7 +384,7 @@ class PlateReader:
 
     def predict(self, image_input, use_cache: bool = True) -> Dict[str, Any]:
         """
-        Runs a1.3.4.1 OCR model on image_path or PIL Image.
+        Runs edge_reader OCR model on image_path or PIL Image.
         Returns dict:
         {
             "d3": str,

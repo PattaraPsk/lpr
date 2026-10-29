@@ -51,8 +51,8 @@ For example:
   - **`d4`**: License plate numbers (e.g. `1234`, `9999`).
   - **`Province`**: Searchable dropdown autocomplete with all 77 Thai provinces plus `+` and `-`.
 
-- **🤖 AI Plate Reader (`a1.3.4.1`) & Live Comparison**:
-  - **Integrated `a1.3.4.1` Model**: Authentic Pure PyTorch OCR architecture (RCNN + BiLSTM + Attention Decoder) loading `models/reader/a1.3.4.1/best_norm_ED.pth`.
+- **🤖 AI Plate Reader (`Edge AI Reader`) & Live Comparison**:
+  - **Integrated `Edge AI Reader` Model**: Authentic Pure PyTorch OCR architecture (RCNN + BiLSTM + Attention Decoder) loading `models/reader/Edge AI Reader/best_norm_ED.pth`.
   - **Auto-Read**: Automatically runs background inference when navigating through images (toggleable).
   - **Live Comparison Grid**: Shows side-by-side comparison between Current values and AI Predicted values for **d3**, **d4**, and **Province** with color-coded diff badges (`Matched ✅`, `Differences ⚠️`).
   - **Selective & Individual Replacement**:
@@ -60,7 +60,7 @@ For example:
     - **Replace Selected**: Checkboxes next to each field to replace any combination of fields.
   - **Bulk Replacement**:
     - **`⚡ Replace All (Ctrl+R)`**: Replaces `d3`, `d4`, and `Province` simultaneously with AI predictions.
-  - **Batch AI Read (`🤖 AI Read All`)**: Runs a1.3.4.1 across all images in the active folder/subfolder with a live progress dialog.
+  - **Batch AI Read (`🤖 AI Read All`)**: Runs Edge AI Reader across all images in the active folder/subfolder with a live progress dialog.
 
 - **Management & Action Buttons**:
   - **Correct / Approve** (`Enter`): Saves and approves the current image. Renames file according to the filled boxes (e.g. `{name}_{plate_type}_{d3}_{d4}_{province}.jpg`, `{name}_+_+_+_+.jpg`, or `{name}_-_-_-_-.jpg`) and advances to the next image.

@@ -8,11 +8,22 @@ Filename structure: {name}_{plate_type}_{d3}_{d4}_{province}.{ext}
 import os
 import re
 import json
+import shutil
 import unicodedata
 from datetime import datetime, timezone
 from .provinces import normalize_thai_script, get_iso_code
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple, Union
+
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
+_new_staging = ROOT_DIR / "dataset" / "verified" / "dataset-staging-approved"
+_legacy_staging = ROOT_DIR / "dataset" / "dataset-staging-approved"
+DEFAULT_STAGING_DIR = _new_staging if _new_staging.exists() or not _legacy_staging.exists() else _legacy_staging
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 SESSION_FILENAME = ".lpr_session.json"
@@ -44,7 +55,7 @@ class ImageItem:
         self.d4: str = ""
         self.province: str = ""
         
-        # AI Reader (a1.3.4.1) predictions
+        # AI Reader (edge_reader) predictions
         self.ai_d3: str = ""
         self.ai_d4: str = ""
         self.ai_province: str = ""
@@ -52,6 +63,11 @@ class ImageItem:
         
         # Status: "pending", "approved", "not_plate", "cannot_read", "skipped"
         self.status: str = "pending"
+        
+        # Bounding boxes for YOLO detection
+        self.boxes: List[Dict[str, Any]] = []
+        self.label_path: Optional[Path] = None
+        self._boxes_loaded: bool = False
         
         self.parse_filename()
         
@@ -157,9 +173,115 @@ class ImageItem:
             "confidence": self.ai_confidence
         }
 
+    def find_label_path(self, root_folder: Optional[Path] = None) -> Optional[Path]:
+        """Finds corresponding YOLO .txt label file on disk."""
+        # 1. Fast path: string substitution /images/ -> /labels/
+        p_str = str(self.path)
+        if "/images/" in p_str:
+            cand = Path(p_str.replace("/images/", "/labels/")).with_suffix('.txt')
+            if cand.exists():
+                return cand
+        if "\\images\\" in p_str:
+            cand = Path(p_str.replace("\\images\\", "\\labels\\")).with_suffix('.txt')
+            if cand.exists():
+                return cand
+
+        # 2. Same directory
+        cand = self.path.with_suffix('.txt')
+        if cand.exists():
+            return cand
+                
+        # 3. Via root_folder structure
+        if root_folder:
+            try:
+                rel = self.path.relative_to(root_folder)
+                rel_parts = list(rel.parts)
+                if rel_parts and rel_parts[0] == "images":
+                    rel_parts[0] = "labels"
+                    cand = (root_folder / Path(*rel_parts)).with_suffix('.txt')
+                    if cand.exists():
+                        return cand
+            except Exception:
+                pass
+            try:
+                cand = (root_folder.parent / "labels" / self.path.name).with_suffix('.txt')
+                if cand.exists():
+                    return cand
+            except Exception:
+                pass
+
+        return None
+
+    def load_yolo_boxes(self, class_names: Optional[Dict[int, str]] = None, root_folder: Optional[Path] = None) -> List[Dict[str, Any]]:
+        """Loads bounding boxes from YOLO label file."""
+        if class_names is None:
+            class_names = {}
+        self.label_path = self.find_label_path(root_folder)
+        self.boxes = []
+        if self.label_path and self.label_path.exists():
+            try:
+                with open(self.label_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            cls_id = int(parts[0])
+                            cx = float(parts[1])
+                            cy = float(parts[2])
+                            w = float(parts[3])
+                            h = float(parts[4])
+                            cls_name = class_names.get(cls_id, f"Class {cls_id}")
+                            self.boxes.append({
+                                "cls_id": cls_id,
+                                "cls_name": cls_name,
+                                "bbox_norm": (cx, cy, w, h)
+                            })
+            except Exception as e:
+                print(f"Warning: Failed to load labels from {self.label_path}: {e}")
+        self._boxes_loaded = True
+        return self.boxes
+
+    def save_yolo_boxes(self, boxes: Optional[List[Dict[str, Any]]] = None) -> bool:
+        """Saves bounding boxes to disk in YOLO format."""
+        if boxes is not None:
+            self.boxes = boxes
+        if not self.label_path:
+            p_str = str(self.path)
+            if "/images/" in p_str:
+                self.label_path = Path(p_str.replace("/images/", "/labels/")).with_suffix('.txt')
+            elif "\\images\\" in p_str:
+                self.label_path = Path(p_str.replace("\\images\\", "\\labels\\")).with_suffix('.txt')
+            else:
+                self.label_path = self.path.with_suffix('.txt')
+                
+        try:
+            self.label_path.parent.mkdir(parents=True, exist_ok=True)
+            lines = []
+            for b in self.boxes:
+                cls_id = b.get("cls_id", 0)
+                if "bbox_norm" in b:
+                    cx, cy, w, h = b["bbox_norm"]
+                    lines.append(f"{cls_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}")
+                elif "box_xyxy" in b:
+                    x1, y1, x2, y2 = b["box_xyxy"]
+                    cx = (x1 + x2) / 2.0
+                    cy = (y1 + y2) / 2.0
+                    w = x2 - x1
+                    h = y2 - y1
+                    lines.append(f"{cls_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}")
+                    
+            with open(self.label_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + ("\n" if lines else ""))
+            return True
+        except Exception as e:
+            print(f"Error saving yolo boxes to {self.label_path}: {e}")
+            return False
+
     def to_dict(self) -> Dict[str, Any]:
         norm_prov = normalize_thai_script(self.province)
-        return {
+        d = {
             "filename": self.filename,
             "rel_path": self.rel_path,
             "subfolder": self.subfolder,
@@ -175,6 +297,9 @@ class ImageItem:
             "ai_province": self.ai_province,
             "ai_confidence": self.ai_confidence,
         }
+        if self.boxes:
+            d["boxes"] = self.boxes
+        return d
         
     def from_dict(self, data: Dict[str, Any]):
         self.status = data.get("status", self.status)
@@ -196,6 +321,8 @@ class ImageItem:
             self.ai_province = data["ai_province"]
         if "ai_confidence" in data:
             self.ai_confidence = float(data["ai_confidence"])
+        if "boxes" in data:
+            self.boxes = data["boxes"]
 
 
 class SessionManager:
@@ -204,6 +331,20 @@ class SessionManager:
         self.items: List[ImageItem] = []
         self.current_index: int = 0
         self.active_subfolder: Optional[str] = None # None means All
+        self.dataset_type: str = "ocr" # "ocr" or "yolo"
+        self.class_names: Dict[int, str] = {
+            0: "Front",
+            1: "Rear",
+            2: "LicensePlate",
+            3: "Car",
+            4: "Motorcycle",
+            5: "Truck",
+            6: "Bus"
+        }
+        self.active_class_filter: Optional[int] = None
+        self.active_status_filter: str = "all"
+        self.staging_dir: Path = DEFAULT_STAGING_DIR
+        self.auto_staging: bool = True
         
     def load_folder(self, folder_str: str) -> bool:
         """Recursively loads images in folder (including all subfolders) and restores session."""
@@ -214,6 +355,8 @@ class SessionManager:
         self.folder_path = folder
         self.items = []
         self.active_subfolder = None
+        self.active_class_filter = None
+        self.active_status_filter = "all"
         
         # Recursively collect all image files, skipping hidden dirs and cache
         image_files = []
@@ -231,6 +374,56 @@ class SessionManager:
         for file in image_files:
             self.items.append(ImageItem(file, folder))
             
+        # Auto-detect dataset type and class definitions
+        self.dataset_type = "ocr"
+        self.class_names = {
+            0: "Front",
+            1: "Rear",
+            2: "LicensePlate",
+            3: "Car",
+            4: "Motorcycle",
+            5: "Truck",
+            6: "Bus"
+        }
+        
+        yaml_path = None
+        for cand in [folder / "data.yaml", folder.parent / "data.yaml"]:
+            try:
+                if cand.resolve().exists():
+                    yaml_path = cand.resolve()
+                    break
+            except Exception:
+                pass
+                
+        if not yaml_path:
+            for root, dirs, files in os.walk(folder):
+                if "data.yaml" in files:
+                    yaml_path = Path(root) / "data.yaml"
+                    break
+
+        if yaml_path and yaml_path.exists():
+            try:
+                if yaml:
+                    with open(yaml_path, "r", encoding="utf-8") as f:
+                        ydata = yaml.safe_load(f)
+                        if isinstance(ydata, dict) and "names" in ydata:
+                            raw_names = ydata["names"]
+                            if isinstance(raw_names, list):
+                                self.class_names = {i: str(n) for i, n in enumerate(raw_names)}
+                            elif isinstance(raw_names, dict):
+                                self.class_names = {int(k): str(v) for k, v in raw_names.items()}
+                self.dataset_type = "yolo"
+            except Exception as ye:
+                print(f"Warning: Failed to parse data.yaml: {ye}")
+
+        if self.dataset_type != "yolo":
+            # Quick check first 10 items for matching YOLO label files
+            for item in self.items[:10]:
+                lbl = item.find_label_path(folder)
+                if lbl and lbl.exists():
+                    self.dataset_type = "yolo"
+                    break
+
         # Check and load saved session
         session_file = folder / SESSION_FILENAME
         if not session_file.exists():
@@ -318,19 +511,74 @@ class SessionManager:
                 subs.add(item.subfolder)
         return sorted(list(subs))
 
-    def get_filtered_indices(self, subfolder: Optional[str] = None) -> List[int]:
-        """Returns list of item indices matching subfolder filter (None or '' means All)."""
-        if not subfolder or subfolder == "(All)":
-            return list(range(len(self.items)))
-            
-        if subfolder == "(Root)":
-            return [i for i, it in enumerate(self.items) if not it.subfolder]
-            
-        return [i for i, it in enumerate(self.items) if it.subfolder == subfolder]
+    def ensure_all_boxes_loaded(self):
+        """Loads bounding boxes for all items if not already loaded."""
+        for item in self.items:
+            if not getattr(item, "_boxes_loaded", False):
+                item.load_yolo_boxes(self.class_names, self.folder_path)
 
-    def get_next_index(self, current_idx: int, subfolder: Optional[str] = None) -> Optional[int]:
-        """Finds next index respecting subfolder filter."""
-        indices = self.get_filtered_indices(subfolder)
+    def get_filtered_indices(self, subfolder: Optional[str] = None, class_filter: Optional[int] = None, status_filter: Optional[str] = None) -> List[int]:
+        """Returns list of item indices matching subfolder, class filter, and status filter."""
+        if class_filter is not None and class_filter != -1:
+            self.ensure_all_boxes_loaded()
+
+        if status_filter is None:
+            status_filter = getattr(self, "active_status_filter", "all")
+
+        indices = []
+        for i, it in enumerate(self.items):
+            # 1. Subfolder filter
+            if subfolder and subfolder != "(All)":
+                if subfolder == "(Root)":
+                    if it.subfolder:
+                        continue
+                elif it.subfolder != subfolder:
+                    continue
+            
+            # 2. Class filter (YOLO mode)
+            if class_filter is not None and class_filter != -1:
+                if class_filter == -2:
+                    # Filter unannotated (no boxes)
+                    if len(it.boxes) > 0:
+                        continue
+                else:
+                    if not any(b.get("cls_id") == class_filter for b in it.boxes):
+                        continue
+
+            # 3. Status filter (OCR / Annotation mode)
+            if status_filter and status_filter != "all":
+                if status_filter == "not_plate":
+                    if not (it.status == "not_plate" or (it.d3 == "+" and it.d4 == "+" and it.province == "+") or it.plate_type == "+"):
+                        continue
+                elif status_filter == "cannot_read":
+                    if not (it.status == "cannot_read" or (it.d3 == "-" and it.d4 == "-" and it.province == "-") or it.plate_type == "-"):
+                        continue
+                elif status_filter == "pending":
+                    is_special = (it.d3 in ("+", "-") and it.d4 in ("+", "-")) or it.plate_type in ("+", "-")
+                    if it.status != "pending" or is_special:
+                        continue
+                elif status_filter == "approved":
+                    if it.status != "approved":
+                        continue
+                elif status_filter == "skipped":
+                    if it.status != "skipped":
+                        continue
+                elif status_filter == "dup":
+                    if not (re.search(r'_dup(\d+)?(_|$|\.)', it.filename, re.IGNORECASE) or "_dup" in it.filename.lower()):
+                        continue
+                elif status_filter == "ai_diff":
+                    comp = it.get_ai_comparison()
+                    if not comp["has_ai"] or comp["all_match"]:
+                        continue
+                elif it.status != status_filter:
+                    continue
+                        
+            indices.append(i)
+        return indices
+
+    def get_next_index(self, current_idx: int, subfolder: Optional[str] = None, class_filter: Optional[int] = None, status_filter: Optional[str] = None) -> Optional[int]:
+        """Finds next index respecting subfolder, class filter, and status filter."""
+        indices = self.get_filtered_indices(subfolder, class_filter, status_filter)
         if not indices:
             return None
         for i in indices:
@@ -338,15 +586,38 @@ class SessionManager:
                 return i
         return indices[-1] # Stay at last if reached end
 
-    def get_prev_index(self, current_idx: int, subfolder: Optional[str] = None) -> Optional[int]:
-        """Finds previous index respecting subfolder filter."""
-        indices = self.get_filtered_indices(subfolder)
+    def get_prev_index(self, current_idx: int, subfolder: Optional[str] = None, class_filter: Optional[int] = None, status_filter: Optional[str] = None) -> Optional[int]:
+        """Finds previous index respecting subfolder, class filter, and status filter."""
+        indices = self.get_filtered_indices(subfolder, class_filter, status_filter)
         if not indices:
             return None
         for i in reversed(indices):
             if i < current_idx:
                 return i
         return indices[0] # Stay at first if reached start
+
+    def get_yolo_stats(self, subfolder: Optional[str] = None) -> Dict[str, Any]:
+        """Calculates dataset statistics for YOLO object detection."""
+        self.ensure_all_boxes_loaded()
+        indices = self.get_filtered_indices(subfolder=subfolder, status_filter="all")
+        items = [self.items[i] for i in indices]
+        total_images = len(items)
+        images_with_boxes = 0
+        class_counts = {cid: 0 for cid in self.class_names.keys()}
+        total_boxes = 0
+        for it in items:
+            if it.boxes:
+                images_with_boxes += 1
+                for b in it.boxes:
+                    cid = b.get("cls_id", 0)
+                    class_counts[cid] = class_counts.get(cid, 0) + 1
+                    total_boxes += 1
+        return {
+            "total_images": total_images,
+            "images_with_boxes": images_with_boxes,
+            "total_boxes": total_boxes,
+            "class_counts": class_counts
+        }
 
     def apply_ai_to_item(self, idx: int, replace_d3: bool = True, replace_d4: bool = True, replace_prov: bool = True) -> bool:
         """Applies AI predictions to the specified item fields."""
@@ -363,7 +634,10 @@ class SessionManager:
 
     def get_current_item(self) -> Optional[ImageItem]:
         if 0 <= self.current_index < len(self.items):
-            return self.items[self.current_index]
+            item = self.items[self.current_index]
+            if not getattr(item, "_boxes_loaded", False):
+                item.load_yolo_boxes(self.class_names, self.folder_path)
+            return item
         return None
 
     def rename_file(self, item: ImageItem, new_filename: str) -> bool:
@@ -544,8 +818,126 @@ class SessionManager:
             new_filename = f"{name}_{new_plate_type}_{new_d3}_{new_d4}_{new_province}{ext}"
             self.rename_file(item, new_filename)
             
+        if item.status == "approved" and getattr(self, "auto_staging", True):
+            self.add_to_staging(item)
+
         self.save_session()
         return True
+
+    def set_staging_dir(self, staging_path: Union[str, Path]):
+        """Sets custom dataset staging directory."""
+        self.staging_dir = Path(staging_path).resolve()
+
+    def add_to_staging(self, item: ImageItem) -> Optional[Path]:
+        """
+        Adds/copies an approved item to the dataset staging directory waiting for dataset building.
+        For license plate reading tasks:
+            Folder named by {type}_{d3}_{d4}_{province}
+            Destination: {staging_dir}/{type}_{d3}_{d4}_{province}/{filename}
+        For detection tasks:
+            Destination: {staging_dir}/detector/images/{filename} and labels/{stem}.txt
+        """
+        if item.status != "approved":
+            return None
+            
+        if not item.path.exists():
+            return None
+
+        self.staging_dir.mkdir(parents=True, exist_ok=True)
+
+        is_reading_task = (self.dataset_type == "ocr") or (
+            bool(item.d3 and item.d4 and item.province and item.d3 not in ["+", "-"])
+        )
+
+        if is_reading_task:
+            clean_type = item.plate_type.strip() if item.plate_type else "WhiteBlackCar"
+            clean_d3 = normalize_thai_script(item.d3).strip()
+            clean_d4 = item.d4.strip()
+            clean_prov = normalize_thai_script(item.province).strip()
+
+            raw_folder_name = f"{clean_type}_{clean_d3}_{clean_d4}_{clean_prov}"
+            folder_name = re.sub(r'[<>:"/\\|?*]', '_', raw_folder_name).strip(' .')
+            if not folder_name:
+                folder_name = "unknown_plate"
+
+            target_folder = self.staging_dir / folder_name
+            target_folder.mkdir(parents=True, exist_ok=True)
+
+            dest_path = target_folder / item.path.name
+            shutil.copy2(item.path, dest_path)
+            setattr(item, "_staged_path", str(dest_path))
+            self._update_staging_manifest(item, dest_path, is_reading=True)
+            return dest_path
+        else:
+            det_img_dir = self.staging_dir / "detector" / "images"
+            det_lbl_dir = self.staging_dir / "detector" / "labels"
+            det_img_dir.mkdir(parents=True, exist_ok=True)
+            det_lbl_dir.mkdir(parents=True, exist_ok=True)
+
+            dest_path = det_img_dir / item.path.name
+            shutil.copy2(item.path, dest_path)
+            if item.label_path and item.label_path.exists():
+                shutil.copy2(item.label_path, det_lbl_dir / item.label_path.name)
+            setattr(item, "_staged_path", str(dest_path))
+            self._update_staging_manifest(item, dest_path, is_reading=False)
+            return dest_path
+
+    def _update_staging_manifest(self, item: ImageItem, dest_path: Path, is_reading: bool):
+        """Maintains .staging_manifest.json in staging directory."""
+        manifest_file = self.staging_dir / ".staging_manifest.json"
+        manifest = {}
+        if manifest_file.exists():
+            try:
+                with open(manifest_file, "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+            except Exception:
+                manifest = {}
+
+        items_dict = manifest.get("items", {})
+        try:
+            rel_dest = str(dest_path.relative_to(self.staging_dir)).replace("\\", "/")
+        except ValueError:
+            rel_dest = str(dest_path).replace("\\", "/")
+
+        items_dict[item.filename] = {
+            "source_path": str(item.path),
+            "staged_path": rel_dest,
+            "plate_type": item.plate_type,
+            "d3": item.d3,
+            "d4": item.d4,
+            "province": item.province,
+            "iso_3166_2": get_iso_code(item.province) if item.province else None,
+            "is_reading_task": is_reading,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+
+        manifest["version"] = "1.0"
+        manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+        manifest["total_staged"] = len(items_dict)
+        manifest["items"] = items_dict
+
+        try:
+            with open(manifest_file, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def export_all_approved_to_staging(self, subfolder: Optional[str] = None) -> Tuple[int, Path]:
+        """Copies all approved items matching subfolder to dataset staging directory."""
+        items = self.items
+        if subfolder and subfolder != "(All)":
+            if subfolder == "(Root)":
+                items = [it for it in items if not it.subfolder]
+            else:
+                items = [it for it in items if it.subfolder == subfolder]
+
+        approved_items = [it for it in items if it.status == "approved"]
+        count = 0
+        for it in approved_items:
+            res = self.add_to_staging(it)
+            if res:
+                count += 1
+        return count, self.staging_dir
 
 
     def mark_skipped(self, index: int):
@@ -557,7 +949,7 @@ class SessionManager:
                 self.save_session()
 
     def get_stats(self, subfolder: Optional[str] = None) -> Dict[str, int]:
-        target_items = [self.items[i] for i in self.get_filtered_indices(subfolder)]
+        target_items = [self.items[i] for i in self.get_filtered_indices(subfolder=subfolder, status_filter="all")]
         total = len(target_items)
         approved = sum(1 for it in target_items if it.status == "approved")
         not_plate = sum(1 for it in target_items if it.status == "not_plate")

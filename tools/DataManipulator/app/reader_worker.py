@@ -1,5 +1,5 @@
 """
-Background worker threads for non-blocking a1.3.4.1 AI Reader inference.
+Background worker threads for non-blocking edge_reader AI Reader inference.
 Provides single-image asynchronous prediction and multi-image batch prediction.
 """
 
@@ -11,7 +11,7 @@ from .plate_reader import PlateReader
 
 
 class AISingleReaderWorker(QThread):
-    """Worker thread to run a1.3.4.1 prediction on a single image without blocking the GUI."""
+    """Worker thread to run edge_reader prediction on a single image without blocking the GUI."""
     prediction_ready = pyqtSignal(str, dict) # (image_path, result_dict)
     
     def __init__(self, image_path: str, parent=None):
@@ -34,7 +34,7 @@ class AISingleReaderWorker(QThread):
 
 
 class AIBatchReaderWorker(QThread):
-    """Worker thread to run batch a1.3.4.1 prediction across multiple images."""
+    """Worker thread to run batch edge_reader prediction across multiple images."""
     progress = pyqtSignal(int, int, str)    # (current, total, current_filename)
     item_predicted = pyqtSignal(int, dict)  # (item_index, result_dict)
     batch_finished = pyqtSignal(int)        # (total_completed)

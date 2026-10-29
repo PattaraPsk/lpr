@@ -44,8 +44,6 @@ logs/
 *.xml
 *.safetensors
 *.torchscript
-RAER-TNORF*/
-REAR-FRONT*/
 model/
 models/**/train*/
 models/**/weights/
