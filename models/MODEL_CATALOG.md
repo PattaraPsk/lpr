@@ -74,28 +74,32 @@ This catalog specifies model lineages, architectures, tasks, input dimensions, c
 - **Model Key:** `selen-lpr-0.0.1` *(Next-Gen Edge Architecture)*
 - **Primary Checkpoint:** [`models/reader/selen-lpr-0.0.1/best_reader.pth`](file:///d:/Projects-anti/lpr/models/reader/selen-lpr-0.0.1/best_reader.pth)
 - **Training Artifact:** [`runs/train/selen_lpr_0.0.1/best_reader.pth`](file:///d:/Projects-anti/lpr/runs/train/selen_lpr_0.0.1/best_reader.pth)
-- **Architecture:** Pretrained `MobileNetV3-Small` Backbone (ImageNet-1K, tuned horizontal strides H'=8, W'=48) + Two-Band Spatial Feature Slicing + Multi-Head Self-Attention Transformer Sequence Encoder (256-dim, 4 heads) + Multi-Task Decoders (Plate Type, Province, and Registration Sequence)
-- **Parameters:** 2,759,598 (~10.53 MB float32, ~5.26 MB FP16) — **82% smaller** than legacy baseline (57.9 MB)
-- **Cryptographic Hash (SHA-256):** `6EB802AAE57EAF74436AB13F9B8B23130351D528211EB4B1A34749A50E08650F`
+- **Architecture:** `SelenLPRv2Edge`: Pretrained `MobileNetV3-Small` Backbone (ImageNet-1K, tuned horizontal strides H'=8, W'=48) + Two-Band Spatial Feature Slicing (Upper 62.5% for registration characters, Lower 37.5% for province) + Multi-Head Self-Attention Transformer Sequence Encoder (256-dim, 4 heads) + Multi-Head Slot Character Decoders (8 slot queries: 4 for `d3`, 4 for `d4`) + Direct Lower Band Province Classifier (79 classes) + Global Feature Type Classifier (11 classes)
+- **Parameters:** 3,818,937 (~14.57 MB float32, ~7.28 MB FP16) - **75% smaller** than legacy baseline (57.9 MB)
+- **Cryptographic Hash (SHA-256):** `7C07C588491569D0CD59073255CCFFCFC18372FD348B47CBBF2F17826C414A30`
 - **Inference Speed:** > 2,000 FPS on RTX 4090 GPU / ~3-5 ms on CPU Edge
 - **Target Outputs (End-to-End Simultaneous):**
   1. `plate_type`: 11 DLT vehicle plate categories (`WhiteBlackCar`, `WhiteGreen`, `YellowBlack`, `WhiteBlackMotor`, etc.)
-  2. `d3`: Prefix Thai consonants and leading digits
-  3. `d4`: Registration numbers
+  2. `d3`: Prefix Thai consonants and leading digits (1..4 characters)
+  3. `d4`: Registration numbers (1..4 digits)
   4. `province`: 78 Thailand administrative subdivisions + Betong
-- **Loss Function:** `SelenSVTRMultiTaskLoss` / `SelenDLTMultiTaskLoss` (Focal Loss for `plate_type`, Class-Balanced Cross-Entropy for `province`, Character Sequence Loss, DLT Domain Consistency Penalty, and Kendall Homoscedastic Uncertainty Weighting)
-- **Training Corpus (29,646 balanced plates, 8,429 distinct prefixes):**
+- **Loss Function & Training Protocol:** `SelenMultiTaskLoss` with dual modes:
+  - Mode 1: Clamped Kendall homoscedastic uncertainty (`s_d3`, `s_d4` clamped in `[-2.5, 1.2]`, task scaling `d3=2.5`, `d4=2.0`, label smoothing `0.02`).
+  - Mode 2: Static weighted sum (`1.0*type + 1.0*prov + 3.0*d3 + 3.0*d4 + 0.10*consistency`).
+  - PyTorch AMP mixed precision (`torch.amp.autocast("cuda")` + `GradScaler`) on RTX 4090.
+- **Training Corpus (33,400 clean plates, 8,429 distinct prefixes):**
   - Manually Labeled Ground Truth: `dataset/labeled/manually_labeled/plates` (6,168 plates)
   - Synthetic CCTV: `dataset/dataset-cctv-synthetic/plates` (18,437 plates)
   - Synthetic Mobile: `dataset/dataset-mobile-synthetic/plates` (1,500 plates)
   - Verified Benchmark: `dataset/ready/202610261140` & `mobile` (1,249 plates)
   - Verified Staged/Curated: `dataset/verified/` (2,292 plates)
-- **Evaluation Benchmark (Validation Set across 2,964 plates):**
-  - **Plate Type Accuracy:** **94.6%** (PASSED ALPR standard >= 90%)
-  - **Province Classification Accuracy:** **82.1%** (Near ALPR standard >= 85%)
-  - **Benchmark Performance (Real Verified Ready Plates):**
-    - **Plate Type Accuracy:** **98.06%** (1,160/1,183)
-    - **Province Accuracy:** **95.94%** (1,135/1,183)
+- **Continuation Run Schedule (500 Epochs):**
+  - Resumes from epoch 51 using checkpoint `models/reader/selen-lpr-0.0.1/best_reader.pth`.
+  - Checkpoint bundles saved to `runs/train/selen_lpr_0.0.1/last_checkpoint.pth` and `best_checkpoint.pth` for full state recovery.
+- **Evaluation Benchmark (50-Epoch Baseline Checkpoint):**
+  - **Plate Type Accuracy:** **97.21%** (PASSED ALPR standard >= 90%)
+  - **Province Classification Accuracy:** **95.44%** (PASSED ALPR standard >= 85%)
+  - **Exact 4-Way Match:** Initial convergence lifting to 8.54% at epoch 44, targeted for >90% across 500 epochs under stabilized sequence gradient flow.
 
 ---
 

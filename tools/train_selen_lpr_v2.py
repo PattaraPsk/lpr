@@ -232,20 +232,23 @@ class SelenLPRv2Edge(nn.Module):
 
 class SelenMultiTaskLoss(nn.Module):
     """
-    ISO/IEC 42001 compliant multi-task loss with Kendall uncertainty balancing:
-    1. Focal Loss on plate type (gamma=1.5, smoothing=0.05).
-    2. Cross-Entropy on d3 slots with label smoothing=0.02.
-    3. Cross-Entropy on d4 slots with label smoothing=0.02.
-    4. Cross-Entropy on province with label smoothing=0.02.
-    5. DLT Domain Consistency Penalty.
-    6. Kendall Homoscedastic Task Uncertainty Weighting.
+    ISO/IEC 42001:2023 compliant multi-task loss with dual weighting modes:
+    1. 'clamped_kendall': Clamped homoscedastic uncertainty balancing (s in [-2.5, 1.2])
+       with sequence scaling (d3=2.5, d4=2.0) preventing gradient starvation.
+    2. 'static': Brute-force static weighted sum (1.0*type + 1.0*prov + 3.0*d3 + 3.0*d4 + 0.10*consistency)
+       forcing direct gradient propagation through the Transformer sequence decoders.
     """
-    def __init__(self):
+    def __init__(self, mode: str = "clamped_kendall", d3_weight: float = 2.5, d4_weight: float = 2.0):
         super().__init__()
-        self.log_var_type = nn.Parameter(torch.zeros(1))
-        self.log_var_prov = nn.Parameter(torch.zeros(1))
-        self.log_var_d3 = nn.Parameter(torch.zeros(1))
-        self.log_var_d4 = nn.Parameter(torch.zeros(1))
+        self.mode = mode
+        self.d3_weight = d3_weight
+        self.d4_weight = d4_weight
+
+        # Kendall log variances initialized with negative values for sequence heads
+        self.log_var_type = nn.Parameter(torch.tensor([0.0], dtype=torch.float32))
+        self.log_var_prov = nn.Parameter(torch.tensor([0.0], dtype=torch.float32))
+        self.log_var_d3 = nn.Parameter(torch.tensor([-0.693], dtype=torch.float32))
+        self.log_var_d4 = nn.Parameter(torch.tensor([-0.693], dtype=torch.float32))
 
         self.ce_type = nn.CrossEntropyLoss(label_smoothing=0.05, reduction="none")
         self.ce_prov = nn.CrossEntropyLoss(label_smoothing=0.02)
@@ -253,11 +256,12 @@ class SelenMultiTaskLoss(nn.Module):
         self.ce_d4 = nn.CrossEntropyLoss(label_smoothing=0.02)
 
     def forward(self, preds: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        # 1. Plate Type Focal Loss
-        p_t = F.softmax(preds["type"], dim=-1)
+        # 1. Plate Type Focal Loss (Smoothed, AMP FP16 safe)
+        p_t = F.softmax(preds["type"].float(), dim=-1)
         pt_target = p_t.gather(1, targets["type"].unsqueeze(1)).squeeze(1)
         focal_weight = (1.0 - pt_target).pow(1.5)
-        l_type = (focal_weight * self.ce_type(preds["type"], targets["type"])).mean()
+        raw_type_loss = self.ce_type(preds["type"], targets["type"])
+        l_type = (focal_weight * raw_type_loss).mean()
 
         # 2. Province Loss
         l_prov = self.ce_prov(preds["prov"], targets["prov"])
@@ -271,19 +275,33 @@ class SelenMultiTaskLoss(nn.Module):
         l_d4 = self.ce_d4(preds["d4"].reshape(-1, c4), targets["d4"].reshape(-1))
 
         # 5. DLT Domain Consistency Penalty (Taxi prefix 'ท' vs WhiteBlackCar)
-        # In DLT, taxis with 'ท' prefix must be YellowBlack, not WhiteBlackCar
         p_white = p_t[:, 1]
-        p_taxi = F.softmax(preds["d3"][:, 0, :], dim=-1)[:, D3_TO_IDX.get('ท', 0)]
+        p_taxi = F.softmax(preds["d3"][:, 0, :].float(), dim=-1)[:, D3_TO_IDX.get('ท', 0)]
         l_consistency = torch.relu(p_white + p_taxi - 1.0).mean()
 
-        # 6. Kendall Homoscedastic Uncertainty Weighting
-        loss_total = (
-            torch.exp(-self.log_var_type) * l_type + 0.5 * self.log_var_type +
-            torch.exp(-self.log_var_prov) * l_prov + 0.5 * self.log_var_prov +
-            torch.exp(-self.log_var_d3) * l_d3 + 0.5 * self.log_var_d3 +
-            torch.exp(-self.log_var_d4) * l_d4 + 0.5 * self.log_var_d4 +
-            0.10 * l_consistency
-        )
+        # Multi-task loss aggregation
+        if self.mode == "static":
+            loss_total = (
+                1.0 * l_type +
+                1.0 * l_prov +
+                3.0 * l_d3 +
+                3.0 * l_d4 +
+                0.10 * l_consistency
+            )
+        else:
+            # Clamped Homoscedastic Uncertainty Weighting
+            s_type = torch.clamp(self.log_var_type, min=-2.0, max=2.0)
+            s_prov = torch.clamp(self.log_var_prov, min=-2.0, max=2.0)
+            s_d3   = torch.clamp(self.log_var_d3,   min=-2.5, max=1.2)
+            s_d4   = torch.clamp(self.log_var_d4,   min=-2.5, max=1.2)
+
+            loss_total = (
+                torch.exp(-s_type) * l_type + 0.5 * s_type +
+                torch.exp(-s_prov) * l_prov + 0.5 * s_prov +
+                torch.exp(-s_d3)   * (l_d3 * self.d3_weight) + 0.5 * s_d3 +
+                torch.exp(-s_d4)   * (l_d4 * self.d4_weight) + 0.5 * s_d4 +
+                0.10 * l_consistency
+            )
 
         return {
             "loss": loss_total,
@@ -293,7 +311,6 @@ class SelenMultiTaskLoss(nn.Module):
             "loss_d4": l_d4.detach(),
             "loss_consistency": l_consistency.detach()
         }
-
 
 # =============================================================================
 # Dataset Loader & Clean Parser
@@ -452,9 +469,12 @@ class SelenDataset(Dataset):
 def train_selen_lpr_v2(
     data_dirs: List[Path],
     val_dirs: List[Path],
-    epochs: int = 15,
+    epochs: int = 500,
+    start_epoch: Optional[int] = None,
     batch_size: int = 64,
-    lr: float = 0.0005,
+    lr: float = 0.0003,
+    loss_mode: str = "clamped_kendall",
+    resume: Optional[str] = None,
     device_str: str = "cuda:0",
     output_dir: str = "runs/train/selen_lpr_0.0.1",
     model_export_path: str = "models/reader/selen-lpr-0.0.1/best_reader.pth"
@@ -464,8 +484,18 @@ def train_selen_lpr_v2(
     export_path = Path(model_export_path).resolve()
     export_path.parent.mkdir(parents=True, exist_ok=True)
 
-    device = torch.device(device_str if torch.cuda.is_available() else "cpu")
-    print(f"[*] Training SelenLPR v2 (selen-lpr-0.0.1) on Device: {device}")
+    device = torch.device(device_str if torch.cuda.is_available() and "cuda" in device_str else "cpu")
+    print("=" * 80)
+    print("      SELEN-LPR v2 (selen-lpr-0.0.1) CONTINUED TRAINING PIPELINE")
+    print("=" * 80)
+    print(f"Device        : {device} ({torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'})")
+    print(f"Target Epochs : {epochs}")
+    print(f"Batch Size    : {batch_size}")
+    print(f"Learning Rate : {lr}")
+    print(f"Loss Mode     : {loss_mode}")
+    print(f"Output Dir    : {out_dir}")
+    print(f"Export Checkpt: {export_path}")
+    print("=" * 80)
 
     # Build datasets
     train_dataset = SelenDataset(data_dirs, augment=True)
@@ -495,41 +525,109 @@ def train_selen_lpr_v2(
     print(f"[*] Total Trainable Parameters: {total_params:,} ({model_size_mb:.2f} MB float32)")
 
     # Loss function & Optimizer
-    criterion = SelenMultiTaskLoss().to(device)
+    criterion = SelenMultiTaskLoss(mode=loss_mode).to(device)
+    params_to_opt = list(model.parameters())
+    if loss_mode != "static":
+        params_to_opt += list(criterion.parameters())
+
     optimizer = torch.optim.AdamW(
-        list(model.parameters()) + list(criterion.parameters()),
+        params_to_opt,
         lr=lr,
         weight_decay=1e-4
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
+
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
     best_exact_acc = -1.0
     best_val_loss = float("inf")
     history = []
+    actual_start_epoch = 1
+
+    # Checkpoint resumption
+    if resume and Path(resume).is_file():
+        resume_p = Path(resume).resolve()
+        print(f"[*] Resuming checkpoint from: {resume_p}")
+        ckpt = torch.load(resume_p, map_location=device)
+        if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+            model.load_state_dict(ckpt["model_state_dict"])
+            if "optimizer_state_dict" in ckpt:
+                try:
+                    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+                    print("[+] Restored optimizer state.")
+                except Exception as e:
+                    print(f"[!] Warning: Could not restore optimizer: {e}")
+            if "scaler_state_dict" in ckpt:
+                try:
+                    scaler.load_state_dict(ckpt["scaler_state_dict"])
+                except Exception:
+                    pass
+            if "best_exact_acc" in ckpt:
+                best_exact_acc = ckpt["best_exact_acc"]
+            if "best_val_loss" in ckpt:
+                best_val_loss = ckpt["best_val_loss"]
+            if "history" in ckpt and isinstance(ckpt["history"], list):
+                history = ckpt["history"]
+            if "epoch" in ckpt and start_epoch is None:
+                actual_start_epoch = ckpt["epoch"] + 1
+        elif isinstance(ckpt, dict):
+            # Pure model weights state dict
+            missing, unexp = model.load_state_dict(ckpt, strict=False)
+            print(f"[+] Loaded model weights ({len(ckpt)} keys, missing={len(missing)}, unexpected={len(unexp)}).")
+            summary_path = out_dir / "selen_lpr_summary.json"
+            if summary_path.is_file() and start_epoch is None:
+                try:
+                    with open(summary_path, "r", encoding="utf-8") as f:
+                        prev_sum = json.load(f)
+                    if "history" in prev_sum and len(prev_sum["history"]) > 0:
+                        history = prev_sum["history"]
+                        actual_start_epoch = prev_sum["history"][-1]["epoch"] + 1
+                        best_exact_acc = prev_sum.get("best_exact_acc", -1.0)
+                        best_val_loss = prev_sum.get("best_val_loss", float("inf"))
+                        print(f"[+] Auto-detected prior training history: Resuming at Epoch {actual_start_epoch} (Prior Best Exact Acc: {best_exact_acc:.2f}%)")
+                except Exception as e:
+                    print(f"[!] Note: Could not parse previous summary: {e}")
+
+    if start_epoch is not None:
+        actual_start_epoch = start_epoch
+
+    remaining_epochs = max(1, epochs - actual_start_epoch + 1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=remaining_epochs, eta_min=1e-6)
+    print(f"[*] Training scheduled from Epoch {actual_start_epoch:03d} to {epochs:03d} ({remaining_epochs} epochs remaining).")
+
     t_start = time.time()
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(actual_start_epoch, epochs + 1):
         model.train()
         criterion.train()
         train_loss = 0.0
         n_train_batches = len(train_loader)
 
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs:02d} [Train]")
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch:03d}/{epochs:03d} [Train]")
         for imgs, targets in pbar:
             imgs = imgs.to(device, non_blocking=True)
             for k in targets:
                 targets[k] = targets[k].to(device, non_blocking=True)
 
-            optimizer.zero_grad()
-            preds = model(imgs)
-            loss_dict = criterion(preds, targets)
-            loss = loss_dict["loss"]
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+                preds = model(imgs)
+                loss_dict = criterion(preds, targets)
+                loss = loss_dict["loss"]
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+            scaler.step(optimizer)
+            scaler.update()
 
             train_loss += loss.item()
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            pbar.set_postfix({
+                "loss": f"{loss.item():.3f}",
+                "typ": f"{loss_dict['loss_type'].item():.2f}",
+                "prv": f"{loss_dict['loss_prov'].item():.2f}",
+                "d3": f"{loss_dict['loss_d3'].item():.2f}",
+                "d4": f"{loss_dict['loss_d4'].item():.2f}"
+            })
 
         scheduler.step()
         train_loss /= max(n_train_batches, 1)
@@ -546,13 +644,15 @@ def train_selen_lpr_v2(
         total_eval = 0
 
         with torch.no_grad():
-            for imgs, targets in tqdm(val_loader, desc=f"Epoch {epoch:02d}/{epochs:02d} [Val]"):
+            for imgs, targets in tqdm(val_loader, desc=f"Epoch {epoch:03d}/{epochs:03d} [Val]"):
                 imgs = imgs.to(device, non_blocking=True)
                 for k in targets:
                     targets[k] = targets[k].to(device, non_blocking=True)
 
-                preds = model(imgs)
-                loss_dict = criterion(preds, targets)
+                with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+                    preds = model(imgs)
+                    loss_dict = criterion(preds, targets)
+
                 val_loss += loss_dict["loss"].item()
 
                 pred_types = preds["type"].argmax(dim=-1)
@@ -581,8 +681,8 @@ def train_selen_lpr_v2(
         acc_exact = exact_match / max(total_eval, 1) * 100
 
         print(
-            f"Epoch {epoch:02d}: Train Loss={train_loss:.4f} | Val Loss={val_loss:.4f} | "
-            f"Type={acc_type:.1f}% | Prov={acc_prov:.1f}% | d3={acc_d3:.1f}% | d4={acc_d4:.1f}% | Exact={acc_exact:.1f}%"
+            f"[EPOCH {epoch:03d}/{epochs:03d}] Train Loss={train_loss:.4f} | Val Loss={val_loss:.4f} | "
+            f"Type={acc_type:.1f}% | Prov={acc_prov:.1f}% | d3={acc_d3:.1f}% | d4={acc_d4:.1f}% | Exact={acc_exact:.2f}%"
         )
 
         history.append({
@@ -596,15 +696,31 @@ def train_selen_lpr_v2(
             "acc_exact": round(acc_exact, 2)
         })
 
+        # Save checkpoint bundle for resuming
+        ckpt_bundle = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "scaler_state_dict": scaler.state_dict(),
+            "best_exact_acc": best_exact_acc,
+            "best_val_loss": best_val_loss,
+            "loss_mode": loss_mode,
+            "history": history
+        }
+        torch.save(ckpt_bundle, out_dir / "last_checkpoint.pth")
+        torch.save(model.state_dict(), out_dir / "last_reader.pth")
+
         # Save best model checkpoint
         if acc_exact > best_exact_acc or (acc_exact == best_exact_acc and val_loss < best_val_loss):
             best_exact_acc = acc_exact
             best_val_loss = val_loss
+            ckpt_bundle["best_exact_acc"] = best_exact_acc
+            ckpt_bundle["best_val_loss"] = best_val_loss
+            torch.save(ckpt_bundle, out_dir / "best_checkpoint.pth")
             torch.save(model.state_dict(), export_path)
             torch.save(model.state_dict(), out_dir / "best_reader.pth")
-            print(f"  [+] Saved new best model checkpoint to {export_path} (Exact Acc: {best_exact_acc:.1f}%)")
-
-        torch.save(model.state_dict(), out_dir / "last_reader.pth")
+            print(f"  [+] Saved new best model checkpoint to {export_path} (Exact Acc: {best_exact_acc:.2f}%)")
 
     total_time = time.time() - t_start
     sha256_hash = calculate_sha256(export_path)
@@ -615,7 +731,9 @@ def train_selen_lpr_v2(
         "parameters": total_params,
         "model_size_mb": round(model_size_mb, 2),
         "epochs": epochs,
+        "start_epoch": actual_start_epoch,
         "batch_size": batch_size,
+        "loss_mode": loss_mode,
         "total_time_sec": round(total_time, 2),
         "best_exact_acc": round(best_exact_acc, 2),
         "best_val_loss": round(best_val_loss, 4),
@@ -639,10 +757,15 @@ def train_selen_lpr_v2(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train SelenLPR v2 Multi-Task Reader")
-    parser.add_argument("--epochs", type=int, default=15)
-    parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=0.0005)
-    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--epochs", type=int, default=500, help="Total target epochs")
+    parser.add_argument("--start-epoch", type=int, default=None, help="Explicit start epoch (auto-detected if None)")
+    parser.add_argument("--batch-size", type=int, default=64, help="Batch size (e.g. 64 or 128 for RTX 4090)")
+    parser.add_argument("--lr", type=float, default=0.0003, help="Learning rate")
+    parser.add_argument("--loss-mode", type=str, default="clamped_kendall", choices=["clamped_kendall", "static"],
+                        help="Loss mode: clamped_kendall or static weighted sum")
+    parser.add_argument("--resume", type=str, default="models/reader/selen-lpr-0.0.1/best_reader.pth",
+                        help="Path to checkpoint to resume training from")
+    parser.add_argument("--device", type=str, default="cuda:0", help="Execution device (cuda:0 or cpu)")
     args = parser.parse_args()
 
     # Training data paths (33,400 clean plates)
@@ -664,7 +787,10 @@ if __name__ == "__main__":
         data_dirs=DATA_DIRS,
         val_dirs=VAL_DIRS,
         epochs=args.epochs,
+        start_epoch=args.start_epoch,
         batch_size=args.batch_size,
         lr=args.lr,
+        loss_mode=args.loss_mode,
+        resume=args.resume,
         device_str=args.device
     )

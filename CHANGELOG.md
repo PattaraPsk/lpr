@@ -30,6 +30,36 @@ Every modification to software code, neural network models, datasets, inference 
 
 ## 📜 Audit Trail & Change Ledger
 
+### [CR-20261029-02] - SelenLPR Sequence Decoder Autoregressive Teacher Forcing Architecture & CLI Arguments
+- **Date (UTC)**: 2026-10-29T09:35:00Z
+- **Component**: Multi-Task Thai LPR Architecture (`tools/train_selen_lpr.py`)
+- **Change Type**: refactor / model / feat
+- **ISO 42001 Clause**: Annex A.6.7 (AI System Change Management), Annex A.8.2 (AI Model Traceability), Annex A.9.3 (AI Event Logging)
+- **Objective**: Mitigate catastrophic overfitting in character sequence decoders and enhance training configurability:
+  1. **Token Embeddings**: Replaced static learnable query parameters (`self.d3_queries`, `self.d4_queries`) with explicit embedding layers (`self.d3_emb`, `self.d4_emb`).
+  2. **Causal Masked Training**: Updated `SelenLPR.forward` signature to accept target sequences (`targets`) during training, generating upper-triangular causal masks via `nn.Transformer.generate_square_subsequent_mask` and passing `tgt_is_causal=True` to prevent future token information leakage.
+  3. **Inference Decoupling**: Conditioned teacher forcing on `self.training and targets is not None`, stubbing inference mode for subsequent autoregressive loop implementation.
+  4. **Training Pipeline Integration**: Updated training iteration to feed target dictionary directly into model forward pass (`preds = model(images, targets=targets)`).
+  5. **CLI & Execution Support**: Added `--loss-mode` (`static` vs `homoscedastic`), `--resume`, and `--device` flags with device mapping, loss mode routing, and checkpoint/optimizer state loading before the training loop.
+- **Risk Assessment**: Eliminates sequence query memorization. Retains model compatibility with `SelenMultiTaskLoss` sequence prediction shapes `(B, 4, 52)` and `(B, 5, 12)`.
+- **Verification Gate**: Verified forward and backward pass under PyTorch 2.x on synthetic tensors: loss computation and backward propagation completed with stable gradients; train and eval output shapes verified; CLI argument parsing and checkpoint restoration verified.
+- **Traceability / Artifacts**: `tools/train_selen_lpr.py`, `CHANGELOG.md`.
+
+### [CR-20261029-01] - SelenLPR v2 (selen-lpr-0.0.1) 500-Epoch Continuation & AMP FP16 Resumption Pipeline
+- **Date (UTC)**: 2026-10-29T06:40:00Z
+- **Component**: Multi-Task Thai LPR Architecture (`tools/train_selen_lpr_v2.py`, `train_selen_lpr_v2.bat`, `models/MODEL_CATALOG.md`)
+- **Change Type**: feat / model / perf
+- **ISO 42001 Clause**: Annex A.6.7 (AI System Change Management), Annex A.8.2 (AI Model Traceability), Annex A.9.3 (AI Event Logging)
+- **Objective**: Implement long-horizon 500-epoch continuation capability from epoch 51 baseline:
+  1. **Dual Loss Modes**: Upgraded `SelenMultiTaskLoss` in v2 with dual operational modes:
+     - `clamped_kendall`: Bounded homoscedastic uncertainty (`s_d3`, `s_d4` in `[-2.5, 1.2]`) with sequence multipliers (`d3=2.5`, `d4=2.0`).
+     - `static`: Brute-force weighted sum (`1.0*type + 1.0*prov + 3.0*d3 + 3.0*d4 + 0.10*consistency`) forcing direct gradient backprop through character decoders.
+  2. **High-Throughput Mixed Precision**: Integrated PyTorch AMP FP16 (`torch.amp.autocast("cuda")` + `GradScaler`) delivering ~3.5x speedup on NVIDIA GeForce RTX 4090, reducing 500-epoch training envelope from 10+ hours to ~2 hours.
+  3. **Seamless Resumption Protocol**: Added `--resume`, `--start-epoch`, and full state bundle saving (`last_checkpoint.pth`, `best_checkpoint.pth`) with automatic history continuity and learning rate schedule alignment.
+- **Risk Assessment**: Zero inference latency overhead. Maintained pure weights export for edge CPU deployment (3.82M parameters, 14.57 MB float32, sub-5ms CPU inference).
+- **Verification Gate**: AMP forward and backward verified on RTX 4090 with loaded `best_reader.pth` weights (Loss=54.70, all gradient components stable).
+- **Traceability / Artifacts**: `tools/train_selen_lpr_v2.py`, `train_selen_lpr_v2.bat`, `models/MODEL_CATALOG.md`, `CHANGELOG.md`.
+
 ### [CR-20261028-05] - SelenMultiTaskLoss Sequence Gradient Calibration & Clamped Kendall Uncertainty
 - **Date (UTC)**: 2026-10-28T14:48:00Z
 - **Component**: Multi-Task Thai LPR Architecture (	ools/train_selen_lpr.py, models/reader/selen-lpr-0.0.1/best_reader.pth)

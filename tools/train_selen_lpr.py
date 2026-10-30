@@ -138,7 +138,7 @@ class SelenLPR(nn.Module):
         )
 
         # 5. Head 2: Prefix d3 Sequence Decoder (52 classes, len=4)
-        self.d3_queries = nn.Parameter(torch.randn(1, 4, d_model) * 0.02)
+        self.d3_emb = nn.Embedding(len(D3_CHARS), self.d_model)
         d3_dec_layer = nn.TransformerDecoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=512, dropout=0.1, activation="relu", batch_first=True
         )
@@ -146,7 +146,7 @@ class SelenLPR(nn.Module):
         self.d3_head = nn.Linear(d_model, len(D3_CHARS))
 
         # 6. Head 3: Digits d4 Sequence Decoder (12 classes, len=5)
-        self.d4_queries = nn.Parameter(torch.randn(1, 5, d_model) * 0.02)
+        self.d4_emb = nn.Embedding(len(D4_CHARS), self.d_model)
         d4_dec_layer = nn.TransformerDecoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=512, dropout=0.1, activation="relu", batch_first=True
         )
@@ -166,7 +166,7 @@ class SelenLPR(nn.Module):
             nn.Linear(128, len(PROVINCE_NAMES))
         )
 
-    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor, targets: Dict[str, torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         if x.shape[1] == 1:
             x = x.repeat(1, 3, 1, 1)
 
@@ -183,15 +183,59 @@ class SelenLPR(nn.Module):
         type_emb = memory.mean(dim=1)
         type_logits = self.type_head(type_emb)
 
-        # Head 2: d3 Prefix sequence
-        q_d3 = self.d3_queries.expand(b_size, -1, -1)
-        d3_out = self.d3_decoder(tgt=q_d3, memory=memory)
-        d3_logits = self.d3_head(d3_out)
+        # ---------------------------------------------------------
+        # Head 2 & 3: Autoregressive Decoder with Teacher Forcing
+        # ---------------------------------------------------------
+        if targets is not None:
+            device = x.device
+            # Create a tensor of <SOS> tokens (assuming index 0)
+            sos_tokens = torch.zeros((b_size, 1), dtype=torch.long, device=device)
+            
+            # --- d3 Prefix ---
+            # Right-shift: [SOS, token_0, token_1, token_2]
+            d3_input = torch.cat([sos_tokens, targets["d3"][:, :-1]], dim=1)
+            d3_tgt_emb = self.d3_emb(d3_input)
+            
+            d3_seq_len = d3_input.shape[1]
+            d3_mask = nn.Transformer.generate_square_subsequent_mask(d3_seq_len).to(device)
+            
+            d3_out = self.d3_decoder(tgt=d3_tgt_emb, memory=memory, tgt_mask=d3_mask, tgt_is_causal=True)
+            d3_logits = self.d3_head(d3_out)
 
-        # Head 3: d4 Digits sequence
-        q_d4 = self.d4_queries.expand(b_size, -1, -1)
-        d4_out = self.d4_decoder(tgt=q_d4, memory=memory)
-        d4_logits = self.d4_head(d4_out)
+            # --- d4 Digits ---
+            # Right-shift: [SOS, token_0, token_1, token_2, token_3]
+            d4_input = torch.cat([sos_tokens, targets["d4"][:, :-1]], dim=1)
+            d4_tgt_emb = self.d4_emb(d4_input)
+            
+            d4_seq_len = d4_input.shape[1]
+            d4_mask = nn.Transformer.generate_square_subsequent_mask(d4_seq_len).to(device)
+            
+            d4_out = self.d4_decoder(tgt=d4_tgt_emb, memory=memory, tgt_mask=d4_mask, tgt_is_causal=True)
+            d4_logits = self.d4_head(d4_out)
+        else:
+            device = memory.device
+            
+            d3_tgt = torch.zeros((b_size, 1), dtype=torch.long, device=device)
+            d3_logits_list = []
+            for _ in range(4):
+                d3_mask = nn.Transformer.generate_square_subsequent_mask(d3_tgt.shape[1]).to(device)
+                d3_out = self.d3_decoder(tgt=self.d3_emb(d3_tgt), memory=memory, tgt_mask=d3_mask, tgt_is_causal=True)
+                step_logits = self.d3_head(d3_out)
+                latest_logits = step_logits[:, -1, :]
+                d3_logits_list.append(latest_logits.unsqueeze(1))
+                d3_tgt = torch.cat([d3_tgt, latest_logits.argmax(dim=-1, keepdim=True)], dim=1)
+            d3_logits = torch.cat(d3_logits_list, dim=1)
+
+            d4_tgt = torch.zeros((b_size, 1), dtype=torch.long, device=device)
+            d4_logits_list = []
+            for _ in range(5):
+                d4_mask = nn.Transformer.generate_square_subsequent_mask(d4_tgt.shape[1]).to(device)
+                d4_out = self.d4_decoder(tgt=self.d4_emb(d4_tgt), memory=memory, tgt_mask=d4_mask, tgt_is_causal=True)
+                step_logits = self.d4_head(d4_out)
+                latest_logits = step_logits[:, -1, :]
+                d4_logits_list.append(latest_logits.unsqueeze(1))
+                d4_tgt = torch.cat([d4_tgt, latest_logits.argmax(dim=-1, keepdim=True)], dim=1)
+            d4_logits = torch.cat(d4_logits_list, dim=1)
 
         # Head 4: Province classification
         q_prov = self.prov_query.expand(b_size, -1, -1)
@@ -215,9 +259,11 @@ class SelenMultiTaskLoss(nn.Module):
     ISO/IEC 42001:2023 Compliant Multi-Task Loss for Thai LPR (selen-lpr-0.0.1).
     Mitigates sequence gradient starvation via clamped homoscedastic uncertainty,
     calibrated sequence weighting, and AMP FP16-safe cross-entropy.
+    Supports 'homoscedastic' (default) and 'static' weighting modes.
     """
-    def __init__(self, d3_weight: float = 2.5, d4_weight: float = 2.0):
+    def __init__(self, mode: str = "homoscedastic", d3_weight: float = 2.5, d4_weight: float = 2.0):
         super().__init__()
+        self.mode = mode
         # Initial log variances calibrated: negative values give higher initial priority to sequence heads
         self.log_var_type = nn.Parameter(torch.tensor([0.0], dtype=torch.float32))
         self.log_var_d3 = nn.Parameter(torch.tensor([-0.693], dtype=torch.float32))  # exp(-s) ~ 2.0
@@ -261,21 +307,31 @@ class SelenMultiTaskLoss(nn.Module):
         p_taxi_letter = F.softmax(preds["d3_logits"][:, 0, :].float(), dim=-1)[:, 25]  # Consonant 'ท'
         l_consistency = torch.relu(p_white_car + p_taxi_letter - 1.0).mean()
 
-        # 6. Clamped Homoscedastic Uncertainty Weighting
-        # Prevent variance runaway (s > 2.0 -> weight < 0.135) to safeguard sequence gradients
-        s_type = torch.clamp(self.log_var_type, min=-2.0, max=2.0)
-        s_d3   = torch.clamp(self.log_var_d3,   min=-2.5, max=1.2)
-        s_d4   = torch.clamp(self.log_var_d4,   min=-2.5, max=1.2)
-        s_prov = torch.clamp(self.log_var_prov, min=-2.0, max=2.0)
+        # Multi-task objective aggregation
+        if self.mode == "static":
+            w_type = 0.1
+            w_prov = 1.0
+            w_d3 = 5.0
+            w_d4 = 5.0
 
-        # Multi-task objective with precision-weighted losses + regularizer
-        loss_total = (
-            torch.exp(-s_type) * l_type + 0.5 * s_type +
-            torch.exp(-s_d3)   * l_d3   + 0.5 * s_d3   +
-            torch.exp(-s_d4)   * l_d4   + 0.5 * s_d4   +
-            torch.exp(-s_prov) * l_prov + 0.5 * s_prov +
-            0.10 * l_consistency
-        )
+            total_loss = w_type * l_type + w_prov * l_prov + w_d3 * l_d3 + w_d4 * l_d4
+            loss_total = total_loss
+        elif self.mode == "homoscedastic":
+            # Clamped Homoscedastic Uncertainty Weighting
+            c_type = torch.clamp(self.log_var_type, max=1.2)
+            c_d3   = torch.clamp(self.log_var_d3, max=1.2)
+            c_d4   = torch.clamp(self.log_var_d4, max=1.2)
+            c_prov = torch.clamp(self.log_var_prov, max=1.2)
+
+            loss_type = torch.exp(-c_type) * l_type + 0.5 * c_type
+            loss_d3 = torch.exp(-c_d3) * l_d3 + 0.5 * c_d3
+            loss_d4 = torch.exp(-c_d4) * l_d4 + 0.5 * c_d4
+            loss_prov = torch.exp(-c_prov) * l_prov + 0.5 * c_prov
+
+            total_loss = loss_type + loss_d3 + loss_d4 + loss_prov + 0.10 * l_consistency
+            loss_total = total_loss
+        else:
+            raise ValueError(f"Unsupported loss mode: {self.mode}")
 
         return {
             "loss": loss_total,
@@ -431,10 +487,16 @@ def train_selen_lpr(
     epochs: int = 15,
     batch_size: int = 64,
     lr: float = 0.0005,
-    device_str: str = "cuda:0",
+    device: str = "cuda:0",
+    loss_mode: str = "homoscedastic",
+    resume: str = "",
     output_dir: str = "runs/train/selen_lpr_0.0.1",
-    model_export_path: str = "models/reader/selen-lpr-0.0.1/best_reader.pth"
+    model_export_path: str = "models/reader/selen-lpr-0.0.1/best_reader.pth",
+    device_str: Optional[str] = None
 ):
+    if device_str is not None:
+        device = device_str
+
     out_dir = Path(output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     export_path = Path(model_export_path).resolve()
@@ -443,11 +505,14 @@ def train_selen_lpr(
     print("=" * 80)
     print("      SELEN-LPR-0.0.1 UNIFIED MULTI-TASK THAI LPR TRAINING PIPELINE")
     print("=" * 80)
-    device = torch.device(device_str if torch.cuda.is_available() and "cuda" in device_str else "cpu")
+    device = torch.device(device if torch.cuda.is_available() and "cuda" in str(device) else "cpu")
     print(f"Device        : {device} ({torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'})")
     print(f"Epochs        : {epochs}")
     print(f"Batch Size    : {batch_size}")
     print(f"Learning Rate : {lr}")
+    print(f"Loss Mode     : {loss_mode}")
+    if resume:
+        print(f"Resume Ckpt   : {resume}")
     print(f"Output Dir    : {out_dir}")
     print(f"Export Checkpt: {export_path}")
     print("=" * 80)
@@ -469,9 +534,12 @@ def train_selen_lpr(
     print(f"[MODEL] SelenLPR Initialized. Parameters: {params_count:,} ({params_count*4/1024/1024:.2f} MB float32)")
 
     # 3. Loss & Optimizer
-    criterion = SelenMultiTaskLoss().to(device)
+    criterion = SelenMultiTaskLoss(mode=loss_mode).to(device)
+    params_to_opt = list(model.parameters())
+    if loss_mode != "static":
+        params_to_opt += list(criterion.parameters())
     optimizer = torch.optim.AdamW(
-        list(model.parameters()) + list(criterion.parameters()),
+        params_to_opt,
         lr=lr,
         weight_decay=1e-4
     )
@@ -484,6 +552,40 @@ def train_selen_lpr(
     history = []
     t_start = time.time()
 
+    # Resume checkpoint if provided
+    if resume:
+        resume_path = Path(resume).resolve()
+        if resume_path.is_file():
+            print(f"[*] Resuming from checkpoint: {resume_path}")
+            # Load the checkpoint dictionary
+            ckpt = torch.load(args.resume, map_location=device)
+            state_dict = ckpt.get("model_state_dict", ckpt) # Handle nested or raw dicts
+
+            # Delete the keys with shape mismatches so strict=False ignores them
+            keys_to_delete = ["d4_head.weight", "d4_head.bias"]
+            for k in keys_to_delete:
+                if k in state_dict:
+                    del state_dict[k]
+
+            # Load the salvaged weights
+            missing, unexp = model.load_state_dict(state_dict, strict=False)
+            print("[*] Stripped mismatched d4_head weights. Retaining backbone and other heads.")
+            if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+                model.load_state_dict(ckpt["model_state_dict"])
+                print("[+] Loaded model weights from checkpoint.")
+                opt_state = ckpt.get("optimizer_state_dict") or ckpt.get("optimizer")
+                if opt_state is not None:
+                    try:
+                        optimizer.load_state_dict(opt_state)
+                        print("[+] Restored optimizer state.")
+                    except Exception as e:
+                        print(f"[!] Warning: Could not restore optimizer state: {e}")
+            elif isinstance(ckpt, dict):
+                missing, unexp = model.load_state_dict(ckpt, strict=False)
+                print(f"[+] Loaded model weights ({len(ckpt)} keys, missing={len(missing)}, unexpected={len(unexp)}).")
+        else:
+            print(f"[!] Warning: Resume checkpoint not found at: {resume_path}")
+
     for epoch in range(1, epochs + 1):
         model.train()
         train_loss = 0.0
@@ -492,12 +594,12 @@ def train_selen_lpr(
 
         for images, targets in pbar:
             images = images.to(device, non_blocking=True)
-            t_batch = {k: v.to(device, non_blocking=True) for k, v in targets.items()}
+            targets = {k: v.to(device, non_blocking=True) for k, v in targets.items()}
 
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
-                preds = model(images)
-                loss_dict = criterion(preds, t_batch)
+                preds = model(images, targets=targets)
+                loss_dict = criterion(preds, targets)
                 loss = loss_dict["loss"]
 
             scaler.scale(loss).backward()
@@ -602,7 +704,8 @@ def train_selen_lpr(
     summary = {
         "model_name": "selen-lpr-0.0.1",
         "architecture": "SelenLPR (Pretrained MobileNetV3 + Transformer Multi-Task Attention)",
-        "loss_function": "SelenMultiTaskLoss (Focal Type, Masked Seq CE, CB Focal Prov, DLT Prior)",
+        "loss_function": f"SelenMultiTaskLoss (mode={loss_mode})",
+        "loss_mode": loss_mode,
         "parameters": params_count,
         "model_size_mb": round(params_count * 4 / (1024 * 1024), 2),
         "epochs": epochs,
@@ -634,6 +737,9 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=0.0005)
+    parser.add_argument("--loss-mode", type=str, default="homoscedastic", choices=["static", "homoscedastic"])
+    parser.add_argument("--resume", type=str, default="", help="Path to checkpoint")
+    parser.add_argument("--device", type=str, default="cuda:0")
     args = parser.parse_args()
 
     data_directories = [
@@ -650,5 +756,8 @@ if __name__ == "__main__":
         data_dirs=data_directories,
         epochs=args.epochs,
         batch_size=args.batch_size,
-        lr=args.lr
+        lr=args.lr,
+        device=args.device,
+        loss_mode=args.loss_mode,
+        resume=args.resume
     )
