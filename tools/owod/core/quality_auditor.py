@@ -10,10 +10,92 @@ Compliant with:
 
 import json
 import hashlib
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 import yaml
+
+
+class PlateInspectionQueue:
+    """
+    Manages low-confidence license plate crops for quality inspection.
+    Complies with ISO/IEC 5259-2:2023 data quality measures.
+    """
+    DEFAULT_QUEUE_DIR = "dataset/audit_inspection_queue"
+
+    def __init__(self, queue_dir: Union[str, Path] = DEFAULT_QUEUE_DIR):
+        self.queue_dir = Path(queue_dir).resolve()
+        self.queue_dir.mkdir(parents=True, exist_ok=True)
+        self.crops_dir = self.queue_dir / "crops"
+        self.crops_dir.mkdir(parents=True, exist_ok=True)
+        self.manifest_file = self.queue_dir / "inspection_manifest.jsonl"
+
+    def enqueue(
+        self,
+        crop: Any,
+        confidence: float,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Path:
+        """
+        Add a low-confidence plate crop to the inspection queue.
+        Save the crop image and append the record to the inspection manifest.
+        """
+        ts_utc = datetime.now(timezone.utc).isoformat()
+        token = os.urandom(4).hex()
+        item_id = hashlib.sha256(f"{ts_utc}_{confidence}_{token}".encode("utf-8")).hexdigest()[:12]
+        crop_filename = f"crop_{item_id}_{confidence:.3f}.jpg"
+        target_path = self.crops_dir / crop_filename
+
+        if hasattr(crop, "shape") and hasattr(crop, "dtype"):
+            import cv2
+            cv2.imwrite(str(target_path), crop)
+        elif isinstance(crop, (str, Path)) and Path(crop).is_file():
+            import shutil
+            shutil.copy2(str(crop), str(target_path))
+        else:
+            target_path.touch(exist_ok=True)
+
+        record = {
+            "item_id": item_id,
+            "timestamp_utc": ts_utc,
+            "confidence": round(float(confidence), 4),
+            "crop_path": str(target_path).replace("\\", "/"),
+            "relative_crop_path": target_path.name,
+            "status": "PENDING_INSPECTION",
+            "metadata": metadata or {}
+        }
+        with open(self.manifest_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        return target_path
+
+    def list_pending(self) -> List[Dict[str, Any]]:
+        """Return all items currently in the inspection queue."""
+        if not self.manifest_file.is_file():
+            return []
+        items = []
+        with open(self.manifest_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        items.append(json.loads(line))
+                    except Exception:
+                        pass
+        return items
+
+
+def route_to_inspection_queue(
+    crop: Any,
+    confidence: float,
+    metadata: Optional[Dict[str, Any]] = None,
+    queue_dir: Union[str, Path] = PlateInspectionQueue.DEFAULT_QUEUE_DIR
+) -> Path:
+    """Route a plate crop into the auditor inspection queue."""
+    queue = PlateInspectionQueue(queue_dir=queue_dir)
+    return queue.enqueue(crop=crop, confidence=confidence, metadata=metadata)
+
 
 
 def calculate_file_sha256(filepath: Union[str, Path]) -> Optional[str]:

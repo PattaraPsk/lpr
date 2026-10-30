@@ -32,23 +32,17 @@ if "%choice%"=="10" (
     cd /d "%~dp0PlateAugmentor"
     "%PYTHON_EXE%" main.py
 ) else if "%choice%"=="0" (
-    cd /d "%~dp0.."
-    call run_demo_realtime.bat
+    "%PYTHON_EXE%" "%~dp0..\cli.py" demo-realtime
 ) else if "%choice%"=="9" (
-    cd /d "%~dp0.."
-    call run_track_lpr.bat
+    "%PYTHON_EXE%" "%~dp0..\cli.py" track-lpr
 ) else if "%choice%"=="8" (
-    cd /d "%~dp0.."
-    call train_reader.bat
+    "%PYTHON_EXE%" "%~dp0..\cli.py" train-reader
 ) else if "%choice%"=="7" (
-    cd /d "%~dp0.."
-    call train_detector.bat
+    "%PYTHON_EXE%" "%~dp0..\cli.py" train-detector
 ) else if "%choice%"=="6" (
-    cd /d "%~dp0.."
-    call run_tests.bat
+    "%PYTHON_EXE%" "%~dp0..\cli.py" test
 ) else if "%choice%"=="5" (
-    cd /d "%~dp0.."
-    call run_detection.bat
+    "%PYTHON_EXE%" "%~dp0..\cli.py" detect
 ) else if "%choice%"=="4" (
     cd /d "%~dp0rtsp_collector"
     call run.bat

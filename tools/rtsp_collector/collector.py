@@ -22,6 +22,14 @@ from .models import SegmentManifest, StreamProfile, format_iso8601_duration
 from .security import mask_rtsp_url
 from .validator import MediaValidator
 
+# Import quality auditor inspection queue (ISO/IEC 5259-2 compliance)
+try:
+    from tools.owod.core.quality_auditor import PlateInspectionQueue, route_to_inspection_queue
+except ImportError:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools.owod.core.quality_auditor import PlateInspectionQueue, route_to_inspection_queue
+
 logger = logging.getLogger("RTSPCollector.Engine")
 
 
@@ -82,6 +90,7 @@ class StreamIngestionEngine:
             base_storage_dir=self.base_storage_dir,
             manifest_filename=manifest_filename
         )
+        self.inspection_queue = PlateInspectionQueue()
 
         # Runtime state
         self._is_running = False
@@ -379,3 +388,50 @@ class StreamIngestionEngine:
                 self._current_process.terminate()
             except Exception:
                 pass
+
+    def route_plate_crop(
+        self,
+        crop: Any,
+        confidence: float,
+        metadata: Optional[Dict[str, Any]] = None,
+        threshold: float = 0.85
+    ) -> Optional[Path]:
+        """
+        Route plate crops with confidence below threshold to the quality auditor.
+        Use this method for ISO/IEC 5259-2 quality assurance.
+        """
+        if confidence < threshold:
+            logger.info(
+                f"Plate confidence {confidence:.3f} is below threshold {threshold}. "
+                f"Route crop to quality auditor."
+            )
+            crop_metadata = metadata.copy() if metadata else {}
+            crop_metadata.setdefault("camera_id", self.camera_id)
+            crop_metadata.setdefault("channel_id", self.channel_id)
+            crop_metadata.setdefault("source_stream", self.masked_stream_url)
+            return self.inspection_queue.enqueue(
+                crop=crop,
+                confidence=confidence,
+                metadata=crop_metadata
+            )
+        return None
+
+
+def route_low_confidence_crop(
+    crop: Any,
+    confidence: float,
+    metadata: Optional[Dict[str, Any]] = None,
+    threshold: float = 0.85,
+    queue_dir: Union[str, Path] = PlateInspectionQueue.DEFAULT_QUEUE_DIR
+) -> Optional[Path]:
+    """
+    Route plate crops with confidence below threshold to the inspection queue.
+    """
+    if confidence < threshold:
+        return route_to_inspection_queue(
+            crop=crop,
+            confidence=confidence,
+            metadata=metadata,
+            queue_dir=queue_dir
+        )
+    return None

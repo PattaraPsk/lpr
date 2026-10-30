@@ -30,6 +30,16 @@ Every modification to software code, neural network models, datasets, inference 
 
 ## 📜 Audit Trail & Change Ledger
 
+### [CR-20261030-01] - Workspace Consolidation, Legacy Archiving, Dashboard Scaffolding & Auditor Routing
+- **Date (UTC)**: 2026-10-30T05:48:00Z
+- **Component**: Workspace Architecture (`cli.py`, `dashboard/`, `tools/archive/`, `tools/rtsp_collector/collector.py`, `tools/owod/core/quality_auditor.py`)
+- **Change Type**: refactor / feat
+- **ISO 42001 Clause**: Clause 7.5 (Documented Information), Annex A.6.7 (AI System Change Management), Annex A.7.2 (Data Quality Management)
+- **Objective**: Consolidate execution targets into a root argparse CLI, archive legacy scripts, scaffold a unified FastAPI/Streamlit web dashboard, and route low-confidence plate crops (<0.85) directly into the quality auditor queue.
+- **Risk Assessment**: Low risk. All CLI commands wrap original execution arguments. Legacy batch files replaced without functional regression. Quality queue safely isolates low-confidence crops.
+- **Verification Gate**: Passed `tests/test_workspace_refactor.py` (6 unit tests) and `tests/test_iso_compliance.py` (16 compliance tests).
+- **Traceability / Artifacts**: `cli.py`, `dashboard/api.py`, `dashboard/app.py`, `tools/archive/`, `tools/owod/core/quality_auditor.py`, `tools/rtsp_collector/collector.py`, `tests/test_workspace_refactor.py`, `CHANGELOG.md`.
+
 ### [CR-20261029-02] - SelenLPR Sequence Decoder Autoregressive Teacher Forcing Architecture & CLI Arguments
 - **Date (UTC)**: 2026-10-29T09:35:00Z
 - **Component**: Multi-Task Thai LPR Architecture (`tools/train_selen_lpr.py`)

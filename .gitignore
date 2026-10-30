@@ -51,7 +51,8 @@ models/**/weights/
 # Datasets, Raw Media & Large Archives
 dataset/
 curated_lpr_dataset/
-archive/
+/archive/
+!tools/archive/
 runs/
 sample_images/
 **/sample_images/
