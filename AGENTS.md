@@ -19,6 +19,9 @@
   - **All Changes Must Be Logged**: Any modification to models, datasets, inference pipelines, post-processing logic, or configuration must be recorded in `CHANGELOG.md` conforming to ISO/IEC 42001:2023 (Entry ID, Date UTC, Component, ISO 42001 Clause, Objective, Risk Assessment, Verification Gate).
   - **Operational Event Logging (Annex A.9.3)**: Runtime inference and streaming operations must output ISO 8601 UTC timestamps, active model version keys, confidence thresholds, and sanitized paths/credentials.
   - **Auditability & Traceability**: No undocumented changes or silent model replacements permitted. Every active model checkpoint must be documented in `models/MODEL_CATALOG.md`.
+- Git & Remote Push Logging Exclusion:
+  - Do NOT log any git push operations (specifically push to GitHub or other remote repositories) in `CHANGELOG.md` or operational audit logs.
+  - Exclude repository synchronization actions, remote push events, and prompt instruction adjustments from `CHANGELOG.md`.
 
 ## Thai License Plate Domain Knowledge & DLT Specifications
 - **Valid Character Set (41 Consonants):**

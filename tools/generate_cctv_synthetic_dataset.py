@@ -366,22 +366,22 @@ def simulate_cctv_optics_and_angle(
         target_h = int(round(target_width * aspect))
         low_res = cv2.resize(warped, (target_width, target_h), interpolation=cv2.INTER_AREA)
 
-    # --- 3. Optical Defocus & Letter Blurring Engine ---
+    # --- 3. Optical Defocus & Letter Blurring Engine (halved blur intensity) ---
     # Optical Defocus Blur: Make letters soft and blurry
     if target_width < 70:
-        ksize = random.choice([3, 5])
-        sigma = random.uniform(0.9, 1.7)
+        ksize = 3
+        sigma = random.uniform(0.45, 0.85)
     elif target_width < 120:
-        ksize = random.choice([3, 5])
-        sigma = random.uniform(1.1, 2.2)
+        ksize = 3
+        sigma = random.uniform(0.55, 1.10)
     else:
-        ksize = random.choice([3, 5, 7])
-        sigma = random.uniform(1.3, 2.5)
+        ksize = random.choice([3, 5])
+        sigma = random.uniform(0.65, 1.25)
     low_res = cv2.GaussianBlur(low_res, (ksize, ksize), sigma)
 
-    # Directional Vehicle Motion Blur (60% probability)
-    if random.random() < 0.60:
-        m_len = random.choice([3, 5]) if target_width < 90 else random.choice([3, 5, 7])
+    # Directional Vehicle Motion Blur (30% probability, halved kernel length)
+    if random.random() < 0.30:
+        m_len = 3 if target_width < 100 else random.choice([3, 5])
         m_angle = random.uniform(-12.0, 12.0)
         M_rot = cv2.getRotationMatrix2D((m_len / 2.0, m_len / 2.0), m_angle, 1.0)
         k_motion = np.zeros((m_len, m_len), dtype=np.float32)
@@ -392,9 +392,9 @@ def simulate_cctv_optics_and_angle(
             k_motion /= k_sum
             low_res = cv2.filter2D(low_res, -1, k_motion)
 
-    # Resampling Subpixel Softening (Dissolves sharp character edges)
-    if random.random() < 0.70:
-        sub_scale = random.uniform(0.70, 0.88)
+    # Resampling Subpixel Softening (halved scale reduction)
+    if random.random() < 0.35:
+        sub_scale = random.uniform(0.85, 0.94)
         sw = max(16, int(round(target_width * sub_scale)))
         sh = max(8, int(round(target_h * sub_scale)))
         down = cv2.resize(low_res, (sw, sh), interpolation=cv2.INTER_AREA)

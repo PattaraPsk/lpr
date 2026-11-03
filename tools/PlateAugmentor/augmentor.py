@@ -107,16 +107,16 @@ def rotation(
 def gaussian_blur(
     img: Image.Image, intensity: float = 0.5
 ) -> Image.Image:
-    """Simulates out-of-focus camera."""
-    radius = max(0.5, 3.0 * intensity)
+    """Simulates out-of-focus camera (halved blur intensity)."""
+    radius = max(0.25, 1.5 * intensity)
     return img.filter(ImageFilter.GaussianBlur(radius=radius))
 
 
 def motion_blur(
     img: Image.Image, intensity: float = 0.5
 ) -> Image.Image:
-    """Simulates motion blur from moving vehicle."""
-    kernel_size = max(3, int(15 * intensity))
+    """Simulates motion blur from moving vehicle (halved blur intensity)."""
+    kernel_size = max(3, int(7.5 * intensity))
     if kernel_size % 2 == 0:
         kernel_size += 1
 

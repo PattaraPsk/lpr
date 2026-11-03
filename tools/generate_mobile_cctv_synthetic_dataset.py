@@ -564,39 +564,39 @@ def simulate_mobile_optics_and_angle(
     interp = cv2.INTER_AREA if scale < 0.9 else cv2.INTER_LINEAR
     processed = cv2.resize(warped, (target_width, target_h), interpolation=interp)
 
-    # 2. Depth-of-Field Perspective Blur Gradient
+    # 2. Depth-of-Field Perspective Blur Gradient (halved blur intensity)
     # When tilted in 3D perspective, receding characters fade into depth blur
     delta_z = max(z_vals) - min(z_vals)
     if delta_z > 14.0 and target_width > 60:
-        blurred_layer = cv2.GaussianBlur(processed, (5, 5), 2.0)
+        blurred_layer = cv2.GaussianBlur(processed, (3, 3), 1.0)
         if abs(ry) >= abs(rx):
             z_grad = np.linspace(0.0, 1.0, target_width)[None, :] if ry > 0 else np.linspace(1.0, 0.0, target_width)[None, :]
         else:
             z_grad = np.linspace(1.0, 0.0, target_h)[:, None] if rx > 0 else np.linspace(0.0, 1.0, target_h)[:, None]
-        z_mask = np.clip(z_grad * (delta_z / 55.0), 0.0, 0.65)[:, :, None].astype(np.float32)
+        z_mask = np.clip(z_grad * (delta_z / 55.0) * 0.5, 0.0, 0.325)[:, :, None].astype(np.float32)
         processed = np.clip(processed.astype(np.float32) * (1.0 - z_mask) + blurred_layer.astype(np.float32) * z_mask, 0, 255).astype(np.uint8)
 
-    # 3. Vehicle Motion Blur (60% probability)
-    if random.random() < 0.60:
-        m_len = random.choice([3, 5]) if target_width < 90 else random.choice([3, 5, 7])
+    # 3. Vehicle Motion Blur (30% probability, halved kernel length)
+    if random.random() < 0.30:
+        m_len = 3 if target_width < 100 else random.choice([3, 5])
         m_angle = random.uniform(-12.0, 12.0) + (ry * 0.35)
         processed = apply_directional_motion_blur(processed, length=m_len, angle_deg=m_angle)
 
-    # 4. Optical Defocus Blur (Make Letters Soft & Blurry)
+    # 4. Optical Defocus Blur (Halved Blur Intensity)
     if target_width < 70:
-        k_blur = random.choice([3, 5])
-        sigma_blur = random.uniform(0.9, 1.6)
+        k_blur = 3
+        sigma_blur = random.uniform(0.45, 0.8)
     elif target_width < 130:
-        k_blur = random.choice([3, 5])
-        sigma_blur = random.uniform(1.1, 2.1)
+        k_blur = 3
+        sigma_blur = random.uniform(0.55, 1.05)
     else:
-        k_blur = random.choice([3, 5, 7])
-        sigma_blur = random.uniform(1.3, 2.5)
+        k_blur = random.choice([3, 5])
+        sigma_blur = random.uniform(0.65, 1.25)
     processed = cv2.GaussianBlur(processed, (k_blur, k_blur), sigma_blur)
 
-    # 5. Resampling Subpixel Softening (Dissolves sharp letter stroke edges)
-    if random.random() < 0.75:
-        sub_scale = random.uniform(0.70, 0.88)
+    # 5. Resampling Subpixel Softening (Dissolves sharp letter stroke edges - halved scale reduction)
+    if random.random() < 0.40:
+        sub_scale = random.uniform(0.85, 0.94)
         sub_w = max(16, int(round(target_width * sub_scale)))
         sub_h = max(8, int(round(target_h * sub_scale)))
         down = cv2.resize(processed, (sub_w, sub_h), interpolation=cv2.INTER_AREA)

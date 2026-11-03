@@ -1,24 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SelenLPR (selen-lpr-0.0.1) Unified Multi-Task Thai License Plate Recognition Model.
-Directly predicts:
-1. plate_type (DLT Vehicle Category)
-2. d3 (Prefix Thai Consonants / Letters)
-3. d4 (Plate Digits)
-4. province (78 Thailand Administrative Subdivisions)
+SelenLPR (selen-lpr-0.0.1) Left-to-Right CTC Thai License Plate Recognition Model.
 
-Trained with SelenMultiTaskLoss:
-- Label-Smoothed Focal Loss for Plate Type
-- Masked Sequence Cross-Entropy for Prefix d3 and Digits d4
-- Class-Balanced Focal Loss for Province
-- DLT Domain Consistency Prior Penalty
-- Kendall Homoscedastic Uncertainty Weighting
+This module implements a unified multi-task Thai LPR architecture.
+The model uses a Left-to-Right Connectionist Temporal Classification (CTC) sequence head
+to replace autoregressive character decoders.
 
-Complies with:
-- ISO 8601:2019 (Date/Time & UTC Representations)
-- ISO/IEC 42001:2023 (Artificial Intelligence Management System — Annex A.6.7 / A.7.2 / A.9.3)
-- ISO/IEC 25012:2008 (Data Quality & Model Lineage)
+Standards Compliance:
+- ASD-STE100 (Simplified Technical English)
+- ISO 24495-1:2023 (Plain Language)
+- ISO/IEC 42001:2023 (Artificial Intelligence Management System - Clauses 7.5, 8.4, Annex A.6.7, A.9.3)
+- ISO 8601:2019 (Date and Time Representation)
+- ISO/IEC 25012:2008 (Data Quality and Integrity)
 - DLT Thailand Standard Vehicle & License Plate Specifications
 """
 
@@ -38,15 +32,15 @@ from PIL import Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, random_split, Subset
 import torchvision.models as models
 from tqdm import tqdm
 
-# Add repository root to sys.path
+# Add repository root to Python path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
-# Ensure UTF-8 stdout on Windows
+# Ensure UTF-8 standard output on Windows systems
 try:
     if sys.platform.startswith("win"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -58,8 +52,13 @@ from tools.DataManipulator.app.provinces import PROVINCES_DATA, normalize_thai_s
 from tools.DataManipulator.app.plate_types import PLATE_TYPES_DATA, match_plate_type
 
 
+def get_utc_timestamp() -> str:
+    """Return the current ISO 8601 UTC timestamp."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def calculate_sha256(file_path: Path) -> str:
-    """Computes SHA-256 cryptographic hash (ISO/IEC 25012)."""
+    """Compute SHA-256 cryptographic hash (ISO/IEC 25012)."""
     hasher = hashlib.sha256()
     with open(file_path, "rb") as f:
         while chunk := f.read(65536):
@@ -79,23 +78,137 @@ PLATE_TYPES = [
 TYPE_TO_IDX = {t: i for i, t in enumerate(PLATE_TYPES)}
 IDX_TO_TYPE = {i: t for i, t in enumerate(PLATE_TYPES)}
 
-# 2. D3 Consonants & Digits (52 classes, max length 4: up to 3 chars + EOS)
+# 2. Unified Left-to-Right CTC Vocabulary (52 classes)
+# Blank index 0 reuses <pad> index 0.
+CTC_BLANK_IDX = 0
 THAI_CONSONANTS = 'กขคฆงจฉชซฌญฎฐฑฒณดตถทธนบปผฝพฟภมยรลวศษสหฬอฮ'
+CTC_CHARS = ['<pad>'] + [str(d) for d in range(10)] + list(THAI_CONSONANTS)
+CTC_CHAR_TO_IDX = {c: i for i, c in enumerate(CTC_CHARS)}
+CTC_IDX_TO_CHAR = {i: c for i, c in enumerate(CTC_CHARS)}
+VOCAB_SIZE = len(CTC_CHARS)  # 52
+
+# Legacy mappings retained for backward compatibility
 D3_CHARS = ['<pad>', '<eos>'] + [str(d) for d in range(1, 10)] + list(THAI_CONSONANTS)
 D3_TO_IDX = {c: i for i, c in enumerate(D3_CHARS)}
 IDX_TO_D3 = {i: c for i, c in enumerate(D3_CHARS)}
 
-# 3. D4 Digits (12 classes, max length 5: up to 4 digits + EOS)
 D4_CHARS = ['<pad>', '<eos>'] + [str(d) for d in range(10)]
 D4_TO_IDX = {c: i for i, c in enumerate(D4_CHARS)}
 IDX_TO_D4 = {i: c for i, c in enumerate(D4_CHARS)}
 
-# 4. Provinces (79 classes: 0=Unknown, 1..78=Provinces)
+# 3. Provinces (79 classes: 0=Unknown, 1..78=Provinces)
 PROVINCE_NAMES = ['<unknown>'] + [p[0] for p in PROVINCES_DATA]
 if 'เบตง' not in PROVINCE_NAMES:
     PROVINCE_NAMES.append('เบตง')
 PROV_TO_IDX = {p: i for i, p in enumerate(PROVINCE_NAMES)}
 IDX_TO_PROV = {i: p for i, p in enumerate(PROVINCE_NAMES)}
+
+
+# =============================================================================
+# Model Architecture: Left-to-Right CTC Sequence Head with BiLSTM Neck
+# =============================================================================
+
+class LeftToRightCTCHead(nn.Module):
+    """
+    Unified Left-to-Right CTC Sequence Prediction Head with 2-Layer BiLSTM Neck.
+    Complies with ASD-STE100 and ISO 24495-1:2023 standards.
+    Integrates a 2-layer Bidirectional LSTM neck between the CNN backbone features
+    and the final linear CTC classifier, mimicking EasyOCR's CRNN architecture.
+    """
+    def __init__(
+        self,
+        in_channels: int,
+        d_model: int = 256,
+        hidden_size: Optional[int] = None,
+        vocab_size: int = VOCAB_SIZE,
+        time_steps: int = 28,
+        num_layers: int = 2,
+    ):
+        super().__init__()
+        self.time_steps = time_steps
+        self.in_channels = in_channels
+        # Mimic EasyOCR / CRNN design: bidirectional hidden size chosen such that
+        # 2 * hidden_size matches or projects sequence features (default d_model // 2 = 128 -> 256)
+        self.hidden_size = hidden_size if hidden_size is not None else (d_model // 2)
+
+        # Pool vertical height to 1, preserve horizontal left-to-right sequence width W=28
+        self.spatial_pool = nn.AdaptiveAvgPool2d((1, time_steps))
+
+        # 2-layer Bidirectional LSTM neck for spatial sequence modeling
+        self.neck = nn.LSTM(
+            input_size=in_channels,
+            hidden_size=self.hidden_size,
+            num_layers=num_layers,
+            bidirectional=True,
+            batch_first=True,
+        )
+
+        # Final linear CTC classifier: maps BiLSTM features (hidden_size * 2) to CTC vocabulary
+        lstm_out_dim = self.hidden_size * 2
+        self.classifier = nn.Linear(lstm_out_dim, vocab_size)
+
+    def forward(self, feat_2d: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass converting 2D backbone features to CTC sequence predictions.
+
+        Args:
+            feat_2d: Tensor of shape [batch_size, channels, height, width] from CNN backbone.
+
+        Returns:
+            Tensor of shape [batch_size, sequence_length, vocab_size] containing CTC logits.
+        """
+        # Crop top 75% of feature map height to focus on top-line characters (d3 + d4)
+        h = feat_2d.size(2)
+        top_feat = feat_2d[:, :, :max(1, int(h * 0.75)), :]
+
+        # 1. Spatial pooling: collapse height to 1 and adapt sequence width to time_steps
+        # Output shape: [batch_size, channels, 1, sequence_length]
+        pooled = self.spatial_pool(top_feat)
+
+        # 2. Dimension permutation:
+        # [batch_size, channels, 1, sequence_length] -> squeeze(2) -> [batch_size, channels, sequence_length]
+        # permute(0, 2, 1) -> [batch_size, sequence_length, features] required by batch_first=True LSTM
+        x = pooled.squeeze(2).permute(0, 2, 1).contiguous()
+
+        # 3. BiLSTM sequence neck modeling
+        if hasattr(self.neck, "flatten_parameters"):
+            try:
+                self.neck.flatten_parameters()
+            except Exception:
+                pass
+        recurrent, _ = self.neck(x)  # [batch_size, sequence_length, hidden_size * 2]
+
+        # 4. Final linear CTC classification: [batch_size, sequence_length, vocab_size]
+        return self.classifier(recurrent)
+
+
+# =============================================================================
+# Greedy CTC Decoder & Deterministic Split
+# =============================================================================
+
+def decode_and_split_ctc(logits: torch.Tensor, idx2char: Dict[int, str], blank_idx: int = 0) -> List[Tuple[str, str]]:
+    """
+    Greedy CTC decode (B, W, V) -> list of (d3_str, d4_str) pairs.
+    1. Collapses consecutive duplicate indices and removes blank index.
+    2. Deterministically splits at the last Thai consonant (U+0E01 to U+0E2E).
+    """
+    preds = logits.argmax(dim=-1).cpu().tolist()
+    results: List[Tuple[str, str]] = []
+    for seq in preds:
+        # 1. Collapse repeats and drop blank
+        collapsed = [k for i, k in enumerate(seq) if k != blank_idx and (i == 0 or k != seq[i - 1])]
+        full_str = "".join(idx2char.get(k, "") for k in collapsed)
+
+        # 2. Deterministic split at the last Thai consonant (U+0E01 to U+0E2E)
+        last_thai_idx = -1
+        for i, ch in enumerate(full_str):
+            if "\u0e01" <= ch <= "\u0e2e":
+                last_thai_idx = i
+        if last_thai_idx != -1:
+            results.append((full_str[:last_thai_idx + 1], full_str[last_thai_idx + 1:]))
+        else:
+            results.append(("", full_str))
+    return results
 
 
 # =============================================================================
@@ -105,18 +218,26 @@ IDX_TO_PROV = {i: p for i, p in enumerate(PROVINCE_NAMES)}
 class SelenLPR(nn.Module):
     """
     Unified Multi-Task Edge Thai License Plate Recognition Model.
-    - Vision Backbone: Pretrained MobileNetV3-Small (ImageNet-1K).
+    - Vision Backbone: Pretrained MobileNetV3-Small (ImageNet-1K, frozen during fine-tuning).
     - Sequence Context: Multi-Head Self-Attention Transformer Encoder.
-    - Decoders: 4 specialized Multi-Head Cross-Attention prediction heads.
-    - Parameters: ~4.6M (17.6 MB float32), 70% smaller than legacy baseline.
+    - Plate Type Head: Linear classifier for DLT vehicle categories (structurally isolated, frozen).
+    - Unified CTC Head: Left-to-right 2-layer BiLSTM neck + Linear CTC classifier (active).
+    - Province Head: Multi-Head Cross-Attention decoder + Linear classifier (structurally isolated, frozen).
     """
-    def __init__(self, d_model: int = 256, nhead: int = 4):
+    def __init__(
+        self,
+        d_model: int = 256,
+        nhead: int = 4,
+        vocab_size: int = VOCAB_SIZE,
+        ctc_hidden_size: Optional[int] = None,
+        ctc_num_layers: int = 2,
+    ):
         super().__init__()
         self.d_model = d_model
 
-        # 1. Vision Backbone
+        # 1. Vision Backbone (Frozen in fine-tuning)
         mobilenet = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
-        self.backbone = mobilenet.features  # (B, 576, H/16, W/16)
+        self.backbone = mobilenet.features  # (B, 576, H/32, W/32)
         self.proj = nn.Conv2d(576, d_model, kernel_size=1)
         self.norm = nn.LayerNorm(d_model)
 
@@ -129,7 +250,7 @@ class SelenLPR(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(enc_layer, num_layers=2)
 
-        # 4. Head 1: Plate Type Head (11 classes)
+        # 4. Head 1: Vehicle Plate Type Head (11 classes) - Structurally Isolated
         self.type_head = nn.Sequential(
             nn.Linear(d_model, 128),
             nn.ReLU(inplace=True),
@@ -137,7 +258,18 @@ class SelenLPR(nn.Module):
             nn.Linear(128, len(PLATE_TYPES))
         )
 
-        # 5. Head 2: Prefix d3 Sequence Decoder (52 classes, len=4)
+        # 5. Head 2: Upgraded Left-to-Right CTC Sequence Head with 2-Layer BiLSTM Neck (W=28, Vocab=52)
+        # Ingests [batch_size, channels, height, width] from backbone and processes via 2-layer BiLSTM
+        self.ctc_head = LeftToRightCTCHead(
+            in_channels=d_model,
+            d_model=d_model,
+            hidden_size=ctc_hidden_size,
+            vocab_size=vocab_size,
+            time_steps=28,
+            num_layers=ctc_num_layers,
+        )
+
+        # Legacy Decoders (Bypassed in forward, preserved for strict=False loading)
         self.d3_emb = nn.Embedding(len(D3_CHARS), self.d_model)
         d3_dec_layer = nn.TransformerDecoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=512, dropout=0.1, activation="relu", batch_first=True
@@ -145,7 +277,6 @@ class SelenLPR(nn.Module):
         self.d3_decoder = nn.TransformerDecoder(d3_dec_layer, num_layers=1)
         self.d3_head = nn.Linear(d_model, len(D3_CHARS))
 
-        # 6. Head 3: Digits d4 Sequence Decoder (12 classes, len=5)
         self.d4_emb = nn.Embedding(len(D4_CHARS), self.d_model)
         d4_dec_layer = nn.TransformerDecoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=512, dropout=0.1, activation="relu", batch_first=True
@@ -153,7 +284,7 @@ class SelenLPR(nn.Module):
         self.d4_decoder = nn.TransformerDecoder(d4_dec_layer, num_layers=1)
         self.d4_head = nn.Linear(d_model, len(D4_CHARS))
 
-        # 7. Head 4: Province Head (79 classes)
+        # 6. Head 3: Province Classification Head (79 classes) - Structurally Isolated
         self.prov_query = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
         prov_dec_layer = nn.TransformerDecoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=512, dropout=0.1, activation="relu", batch_first=True
@@ -166,193 +297,101 @@ class SelenLPR(nn.Module):
             nn.Linear(128, len(PROVINCE_NAMES))
         )
 
-    def forward(self, x: torch.Tensor, targets: Dict[str, torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+    @property
+    def ctc_neck(self) -> nn.LSTM:
+        """Access the 2-layer BiLSTM neck within the sequence pipeline."""
+        return self.ctc_head.neck
+
+    @property
+    def ctc_classifier(self) -> nn.Linear:
+        """Access the final linear CTC classifier within the sequence pipeline."""
+        return self.ctc_head.classifier
+
+    def forward(self, x: torch.Tensor, targets: Optional[Dict[str, torch.Tensor]] = None) -> Dict[str, torch.Tensor]:
         if x.shape[1] == 1:
             x = x.repeat(1, 3, 1, 1)
 
         b_size = x.shape[0]
-        # Feature extraction & 1x1 projection
-        feats = self.proj(self.backbone(x))        # (B, d_model, H', W')
-        feats = feats.mean(dim=2).permute(0, 2, 1) # (B, W', d_model)
+        # Visual feature extraction & 1x1 projection from frozen CNN backbone: [B, d_model, H', W']
+        feat_2d = self.proj(self.backbone(x))
+        feats = feat_2d.mean(dim=2).permute(0, 2, 1) # (B, W', d_model)
         feats = self.norm(feats)
 
         w_seq = feats.shape[1]
         memory = self.encoder(feats + self.pos_encoder[:, :w_seq, :])
 
-        # Head 1: Plate Type (Global average pooling)
+        # Head 1: Vehicle Type (Global average pooling from memory) - Structurally Isolated
         type_emb = memory.mean(dim=1)
         type_logits = self.type_head(type_emb)
 
-        # ---------------------------------------------------------
-        # Head 2 & 3: Autoregressive Decoder with Teacher Forcing
-        # ---------------------------------------------------------
-        if targets is not None:
-            device = x.device
-            # Create a tensor of <SOS> tokens (assuming index 0)
-            sos_tokens = torch.zeros((b_size, 1), dtype=torch.long, device=device)
-            
-            # --- d3 Prefix ---
-            # Right-shift: [SOS, token_0, token_1, token_2]
-            d3_input = torch.cat([sos_tokens, targets["d3"][:, :-1]], dim=1)
-            d3_tgt_emb = self.d3_emb(d3_input)
-            
-            d3_seq_len = d3_input.shape[1]
-            d3_mask = nn.Transformer.generate_square_subsequent_mask(d3_seq_len).to(device)
-            
-            d3_out = self.d3_decoder(tgt=d3_tgt_emb, memory=memory, tgt_mask=d3_mask, tgt_is_causal=True)
-            d3_logits = self.d3_head(d3_out)
+        # Head 2: Upgraded Left-to-Right CTC Sequence Head with 2-Layer BiLSTM Neck
+        # Handles dimension permutation [B, C, H, W] -> [B, W, C] and outputs [B, 28, Vocab]
+        ctc_logits = self.ctc_head(feat_2d)
 
-            # --- d4 Digits ---
-            # Right-shift: [SOS, token_0, token_1, token_2, token_3]
-            d4_input = torch.cat([sos_tokens, targets["d4"][:, :-1]], dim=1)
-            d4_tgt_emb = self.d4_emb(d4_input)
-            
-            d4_seq_len = d4_input.shape[1]
-            d4_mask = nn.Transformer.generate_square_subsequent_mask(d4_seq_len).to(device)
-            
-            d4_out = self.d4_decoder(tgt=d4_tgt_emb, memory=memory, tgt_mask=d4_mask, tgt_is_causal=True)
-            d4_logits = self.d4_head(d4_out)
-        else:
-            device = memory.device
-            
-            d3_tgt = torch.zeros((b_size, 1), dtype=torch.long, device=device)
-            d3_logits_list = []
-            for _ in range(4):
-                d3_mask = nn.Transformer.generate_square_subsequent_mask(d3_tgt.shape[1]).to(device)
-                d3_out = self.d3_decoder(tgt=self.d3_emb(d3_tgt), memory=memory, tgt_mask=d3_mask, tgt_is_causal=True)
-                step_logits = self.d3_head(d3_out)
-                latest_logits = step_logits[:, -1, :]
-                d3_logits_list.append(latest_logits.unsqueeze(1))
-                d3_tgt = torch.cat([d3_tgt, latest_logits.argmax(dim=-1, keepdim=True)], dim=1)
-            d3_logits = torch.cat(d3_logits_list, dim=1)
-
-            d4_tgt = torch.zeros((b_size, 1), dtype=torch.long, device=device)
-            d4_logits_list = []
-            for _ in range(5):
-                d4_mask = nn.Transformer.generate_square_subsequent_mask(d4_tgt.shape[1]).to(device)
-                d4_out = self.d4_decoder(tgt=self.d4_emb(d4_tgt), memory=memory, tgt_mask=d4_mask, tgt_is_causal=True)
-                step_logits = self.d4_head(d4_out)
-                latest_logits = step_logits[:, -1, :]
-                d4_logits_list.append(latest_logits.unsqueeze(1))
-                d4_tgt = torch.cat([d4_tgt, latest_logits.argmax(dim=-1, keepdim=True)], dim=1)
-            d4_logits = torch.cat(d4_logits_list, dim=1)
-
-        # Head 4: Province classification
+        # Head 3: Province classification (Cross-attention from memory) - Structurally Isolated
         q_prov = self.prov_query.expand(b_size, -1, -1)
         prov_out = self.prov_decoder(tgt=q_prov, memory=memory).squeeze(1)
         prov_logits = self.prov_head(prov_out)
 
         return {
             "type_logits": type_logits,
-            "d3_logits": d3_logits,
-            "d4_logits": d4_logits,
+            "ctc_logits": ctc_logits,
             "prov_logits": prov_logits
         }
 
 
 # =============================================================================
-# Specialized Multi-Task Loss: SelenMultiTaskLoss
+# Loss Function: nn.CTCLoss Configuration
 # =============================================================================
 
 class SelenMultiTaskLoss(nn.Module):
     """
-    ISO/IEC 42001:2023 Compliant Multi-Task Loss for Thai LPR (selen-lpr-0.0.1).
-    Mitigates sequence gradient starvation via clamped homoscedastic uncertainty,
-    calibrated sequence weighting, and AMP FP16-safe cross-entropy.
-    Supports 'homoscedastic' (default) and 'static' weighting modes.
+    Multi-Task CTC Loss for Thai LPR (ASD-STE100 / ISO 24495-1:2023 Compliant).
+    Uses nn.CTCLoss(blank=0, zero_infinity=True).
+    Formats logits as (28, Batch, Vocab) using log_softmax(dim=-1).
+    Sets total_loss = loss_ctc during the CTC sequence head training phase.
     """
-    def __init__(self, mode: str = "homoscedastic", d3_weight: float = 2.5, d4_weight: float = 2.0):
+    def __init__(self, blank_idx: int = CTC_BLANK_IDX):
         super().__init__()
-        self.mode = mode
-        # Initial log variances calibrated: negative values give higher initial priority to sequence heads
-        self.log_var_type = nn.Parameter(torch.tensor([0.0], dtype=torch.float32))
-        self.log_var_d3 = nn.Parameter(torch.tensor([-0.693], dtype=torch.float32))  # exp(-s) ~ 2.0
-        self.log_var_d4 = nn.Parameter(torch.tensor([-0.693], dtype=torch.float32))  # exp(-s) ~ 2.0
-        self.log_var_prov = nn.Parameter(torch.tensor([0.0], dtype=torch.float32))
-
-        self.d3_task_scale = d3_weight
-        self.d4_task_scale = d4_weight
-
-        self.ce_type = nn.CrossEntropyLoss(label_smoothing=0.05, reduction="none")
-        self.ce_d3 = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=0.02, reduction="mean")
-        self.ce_d4 = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=0.02, reduction="mean")
-        self.ce_prov = nn.CrossEntropyLoss(label_smoothing=0.02)
+        self.ctc_loss = nn.CTCLoss(blank=blank_idx, zero_infinity=True)
 
     def forward(self, preds: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        # 1. Plate Type Focal Loss (Smoothed)
-        p_type = F.softmax(preds["type_logits"].float(), dim=-1)
-        pt_target = p_type.gather(1, targets["type"].unsqueeze(1)).squeeze(1)
-        focal_weight = (1.0 - pt_target).pow(1.5)
-        raw_type_loss = self.ce_type(preds["type_logits"], targets["type"])
-        l_type = (focal_weight * raw_type_loss).mean()
+        ctc_logits = preds["ctc_logits"]
+        batch_size = ctc_logits.size(0)
+        time_steps = ctc_logits.size(1)
 
-        # 2. d3 Sequence Loss (Masked Cross Entropy across sequence tokens)
-        b, t3, c3 = preds["d3_logits"].shape
-        d3_flat_logits = preds["d3_logits"].reshape(-1, c3)
-        d3_flat_targets = targets["d3"].reshape(-1)
-        l_d3 = self.ce_d3(d3_flat_logits, d3_flat_targets) * self.d3_task_scale
+        # Format logits as (28, Batch, Vocab) with log_softmax
+        log_probs = ctc_logits.log_softmax(dim=-1).permute(1, 0, 2)
+        input_lengths = torch.full((batch_size,), time_steps, dtype=torch.long, device=ctc_logits.device)
 
-        # 3. d4 Sequence Loss (Masked Cross Entropy across sequence tokens)
-        b, t4, c4 = preds["d4_logits"].shape
-        d4_flat_logits = preds["d4_logits"].reshape(-1, c4)
-        d4_flat_targets = targets["d4"].reshape(-1)
-        l_d4 = self.ce_d4(d4_flat_logits, d4_flat_targets) * self.d4_task_scale
+        loss_ctc = self.ctc_loss(
+            log_probs,
+            targets["seq_targets"],
+            input_lengths,
+            targets["target_lengths"]
+        )
 
-        # 4. Province Classification Loss
-        l_prov = self.ce_prov(preds["prov_logits"], targets["prov"])
-
-        # 5. DLT Domain Consistency Prior Penalty
-        # Commercial taxi prefixes (ท, ม) cannot be standard WhiteBlackCar (idx 1)
-        p_white_car = p_type[:, 1]
-        p_taxi_letter = F.softmax(preds["d3_logits"][:, 0, :].float(), dim=-1)[:, 25]  # Consonant 'ท'
-        l_consistency = torch.relu(p_white_car + p_taxi_letter - 1.0).mean()
-
-        # Multi-task objective aggregation
-        if self.mode == "static":
-            w_type = 0.1
-            w_prov = 1.0
-            w_d3 = 5.0
-            w_d4 = 5.0
-
-            total_loss = w_type * l_type + w_prov * l_prov + w_d3 * l_d3 + w_d4 * l_d4
-            loss_total = total_loss
-        elif self.mode == "homoscedastic":
-            # Clamped Homoscedastic Uncertainty Weighting
-            c_type = torch.clamp(self.log_var_type, max=1.2)
-            c_d3   = torch.clamp(self.log_var_d3, max=1.2)
-            c_d4   = torch.clamp(self.log_var_d4, max=1.2)
-            c_prov = torch.clamp(self.log_var_prov, max=1.2)
-
-            loss_type = torch.exp(-c_type) * l_type + 0.5 * c_type
-            loss_d3 = torch.exp(-c_d3) * l_d3 + 0.5 * c_d3
-            loss_d4 = torch.exp(-c_d4) * l_d4 + 0.5 * c_d4
-            loss_prov = torch.exp(-c_prov) * l_prov + 0.5 * c_prov
-
-            total_loss = loss_type + loss_d3 + loss_d4 + loss_prov + 0.10 * l_consistency
-            loss_total = total_loss
-        else:
-            raise ValueError(f"Unsupported loss mode: {self.mode}")
-
+        total_loss = loss_ctc
         return {
-            "loss": loss_total,
-            "loss_type": l_type.detach(),
-            "loss_d3": l_d3.detach(),
-            "loss_d4": l_d4.detach(),
-            "loss_prov": l_prov.detach(),
-            "loss_consistency": l_consistency.detach()
+            "loss": total_loss,
+            "loss_ctc": loss_ctc.detach()
         }
+
+
 # =============================================================================
 # Multi-Task Dataset Loader
 # =============================================================================
 
 class MultiTaskPlateDataset(Dataset):
     """
-    Dataset loader for multi-task plate recognition:
-    Extracts (img, plate_type_idx, d3_tokens, d4_tokens, prov_idx).
+    Dataset loader for multi-task plate recognition.
+    Extracts image, plate_type_idx, seq_targets, target_lengths, and prov_idx.
+    Strips <SOS>, <EOS>, <PAD> and creates unified target sequences.
     """
-    def __init__(self, data_dirs: List[Path], img_h: int = 64, img_w: int = 384):
+    def __init__(self, data_dirs: List[Path], img_h: int = 64, img_w: int = 384, max_seq_len: int = 28):
         self.img_h = img_h
         self.img_w = img_w
+        self.max_seq_len = max_seq_len
         self.samples: List[Tuple[Path, str, str, str, str]] = []
 
         exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -374,7 +413,7 @@ class MultiTaskPlateDataset(Dataset):
                     if d3 or d4:
                         self.samples.append((p, pt, d3, d4, prov))
 
-        # Deduplicate
+        # Deduplicate samples
         seen = set()
         deduped = []
         for s in self.samples:
@@ -382,7 +421,7 @@ class MultiTaskPlateDataset(Dataset):
                 seen.add(s[0])
                 deduped.append(s)
         self.samples = deduped
-        print(f"[DATASET] Loaded {len(self.samples):,} unique multi-task samples.")
+        print(f"[{get_utc_timestamp()}] [DATASET] Loaded {len(self.samples):,} unique multi-task samples.")
 
     @staticmethod
     def parse_metadata(p: Path) -> Tuple[str, str, str, str]:
@@ -452,27 +491,29 @@ class MultiTaskPlateDataset(Dataset):
         # 1. Plate Type Target
         type_idx = TYPE_TO_IDX.get(pt, 0)
 
-        # 2. d3 Target (length 4: chars + EOS + PAD)
-        d3_tokens = [D3_TO_IDX[c] for c in normalize_thai_script(d3) if c in D3_TO_IDX] + [1]
-        if len(d3_tokens) < 4:
-            d3_tokens += [0] * (4 - len(d3_tokens))
-        else:
-            d3_tokens = d3_tokens[:4]
+        # 2. Unified CTC Sequence Target (Clean d3 + clean d4)
+        # Strip <SOS>, <EOS>, and <PAD> tokens
+        d3_clean = normalize_thai_script(d3)
+        d3_indices = [CTC_CHAR_TO_IDX[c] for c in d3_clean if c in CTC_CHAR_TO_IDX and c != "<pad>"]
+        d4_indices = [CTC_CHAR_TO_IDX[c] for c in d4 if c in CTC_CHAR_TO_IDX and c != "<pad>"]
+        full_indices = d3_indices + d4_indices
+        seq_len = len(full_indices)
 
-        # 3. d4 Target (length 5: digits + EOS + PAD)
-        d4_tokens = [D4_TO_IDX[c] for c in d4 if c in D4_TO_IDX] + [1]
-        if len(d4_tokens) < 5:
-            d4_tokens += [0] * (5 - len(d4_tokens))
+        seq_targets = torch.zeros(self.max_seq_len, dtype=torch.long)
+        if seq_len > 0:
+            valid_len = min(seq_len, self.max_seq_len)
+            seq_targets[:valid_len] = torch.tensor(full_indices[:valid_len], dtype=torch.long)
+            target_length = torch.tensor(valid_len, dtype=torch.long)
         else:
-            d4_tokens = d4_tokens[:5]
+            target_length = torch.tensor(0, dtype=torch.long)
 
-        # 4. Province Target
+        # 3. Province Target
         prov_idx = PROV_TO_IDX.get(prov, 0)
 
         targets = {
             "type": torch.tensor(type_idx, dtype=torch.long),
-            "d3": torch.tensor(d3_tokens, dtype=torch.long),
-            "d4": torch.tensor(d4_tokens, dtype=torch.long),
+            "seq_targets": seq_targets,
+            "target_lengths": target_length,
             "prov": torch.tensor(prov_idx, dtype=torch.long),
         }
         return pad, targets
@@ -488,11 +529,12 @@ def train_selen_lpr(
     batch_size: int = 64,
     lr: float = 0.0005,
     device: str = "cuda:0",
-    loss_mode: str = "homoscedastic",
+    loss_mode: str = "ctc",
     resume: str = "",
     output_dir: str = "runs/train/selen_lpr_0.0.1",
     model_export_path: str = "models/reader/selen-lpr-0.0.1/best_reader.pth",
-    device_str: Optional[str] = None
+    device_str: Optional[str] = None,
+    dry_run: bool = False
 ):
     if device_str is not None:
         device = device_str
@@ -503,7 +545,7 @@ def train_selen_lpr(
     export_path.parent.mkdir(parents=True, exist_ok=True)
 
     print("=" * 80)
-    print("      SELEN-LPR-0.0.1 UNIFIED MULTI-TASK THAI LPR TRAINING PIPELINE")
+    print(f"[{get_utc_timestamp()}] SELEN-LPR-0.0.1 UNIFIED LEFT-TO-RIGHT CTC TRAINING PIPELINE")
     print("=" * 80)
     device = torch.device(device if torch.cuda.is_available() and "cuda" in str(device) else "cpu")
     print(f"Device        : {device} ({torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'})")
@@ -511,6 +553,7 @@ def train_selen_lpr(
     print(f"Batch Size    : {batch_size}")
     print(f"Learning Rate : {lr}")
     print(f"Loss Mode     : {loss_mode}")
+    print(f"Dry Run Mode  : {dry_run}")
     if resume:
         print(f"Resume Ckpt   : {resume}")
     print(f"Output Dir    : {out_dir}")
@@ -518,73 +561,83 @@ def train_selen_lpr(
     print("=" * 80)
 
     # 1. Dataset & DataLoader (95% Train / 5% Validation)
-    full_dataset = MultiTaskPlateDataset(data_dirs=data_dirs, img_h=64, img_w=384)
+    full_dataset = MultiTaskPlateDataset(data_dirs=data_dirs, img_h=64, img_w=384, max_seq_len=28)
     total_len = len(full_dataset)
     val_len = int(total_len * 0.05)
     train_len = total_len - val_len
     train_ds, val_ds = random_split(full_dataset, [train_len, val_len], generator=torch.Generator().manual_seed(42))
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
-    print(f"[DATA SPLIT] Train: {train_len:,} samples | Val: {val_len:,} samples")
+    if dry_run:
+        print(f"[{get_utc_timestamp()}] [DRY-RUN] Slicing minimal dataset for rapid 1-epoch execution.")
+        dry_train_len = min(128, len(train_ds))
+        dry_val_len = min(64, len(val_ds))
+        train_ds = Subset(train_ds, range(dry_train_len))
+        val_ds = Subset(val_ds, range(dry_val_len))
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+        print(f"[{get_utc_timestamp()}] [DRY-RUN] Active Train: {len(train_ds)} samples | Val: {len(val_ds)} samples")
+    else:
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True, drop_last=True)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
+        print(f"[{get_utc_timestamp()}] [DATA SPLIT] Train: {train_len:,} samples | Val: {val_len:,} samples")
 
     # 2. Model Initialization
-    model = SelenLPR(d_model=256, nhead=4).to(device)
+    model = SelenLPR(d_model=256, nhead=4, vocab_size=VOCAB_SIZE).to(device)
     params_count = sum(p.numel() for p in model.parameters())
-    print(f"[MODEL] SelenLPR Initialized. Parameters: {params_count:,} ({params_count*4/1024/1024:.2f} MB float32)")
+    print(f"[{get_utc_timestamp()}] [MODEL] SelenLPR Initialized. Parameters: {params_count:,} ({params_count*4/1024/1024:.2f} MB float32)")
 
-    # 3. Loss & Optimizer
-    criterion = SelenMultiTaskLoss(mode=loss_mode).to(device)
-    params_to_opt = list(model.parameters())
-    if loss_mode != "static":
-        params_to_opt += list(criterion.parameters())
+    # 3. Hard Freeze Converged Heads & Load Checkpoint
+    base_ckpt_path = Path(resume if resume else "models/reader/selen-lpr-0.0.1/best_reader.pth").resolve()
+    if base_ckpt_path.is_file():
+        print(f"[{get_utc_timestamp()}] [*] Loading converged checkpoint: {base_ckpt_path}")
+        ckpt = torch.load(base_ckpt_path, map_location=device)
+        state_dict = ckpt.get("model_state_dict", ckpt)
+
+        # Strip mismatched legacy shape keys or old Conv1d neck keys if present
+        keys_to_clean = ["d4_head.weight", "d4_head.bias"]
+        for k in list(state_dict.keys()):
+            if k in keys_to_clean:
+                del state_dict[k]
+            elif "ctc_head.neck" in k and "weight_ih" not in k:
+                # Discard legacy Conv1d/BatchNorm weights from previous head iteration
+                del state_dict[k]
+            elif k in model.state_dict() and state_dict[k].shape != model.state_dict()[k].shape:
+                del state_dict[k]
+
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        print(f"[{get_utc_timestamp()}] [+] Loaded model weights with strict=False (missing={len(missing)}, unexpected={len(unexpected)}).")
+    else:
+        print(f"[{get_utc_timestamp()}] [!] Warning: Checkpoint not found at: {base_ckpt_path}")
+
+    # Freeze backbone, type_head, and prov_head (param.requires_grad = False)
+    # Keep dedicated 2-layer BiLSTM sequence neck and ctc_head classifier unfrozen (requires_grad = True)
+    for name, param in model.named_parameters():
+        if "ctc_head" in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+
+    locked_names = [n for n, p in model.named_parameters() if not p.requires_grad]
+    train_names = [n for n, p in model.named_parameters() if p.requires_grad]
+    print(f"[{get_utc_timestamp()}] [FREEZE] Locked {len(locked_names)} parameter tensors (Type & Prov accuracies locked).")
+    print(f"[{get_utc_timestamp()}] [TRAINABLE] Active {len(train_names)} parameter tensors (CTC 2-layer BiLSTM sequence head).")
+
+    # 4. Loss & Optimizer
+    criterion = SelenMultiTaskLoss(blank_idx=CTC_BLANK_IDX).to(device)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(
-        params_to_opt,
+        trainable_params,
         lr=lr,
         weight_decay=1e-4
     )
     total_steps = len(train_loader) * epochs
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(total_steps, 1), eta_min=1e-6)
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
     best_val_loss = float("inf")
     best_exact_acc = 0.0
     history = []
     t_start = time.time()
-
-    # Resume checkpoint if provided
-    if resume:
-        resume_path = Path(resume).resolve()
-        if resume_path.is_file():
-            print(f"[*] Resuming from checkpoint: {resume_path}")
-            # Load the checkpoint dictionary
-            ckpt = torch.load(args.resume, map_location=device)
-            state_dict = ckpt.get("model_state_dict", ckpt) # Handle nested or raw dicts
-
-            # Delete the keys with shape mismatches so strict=False ignores them
-            keys_to_delete = ["d4_head.weight", "d4_head.bias"]
-            for k in keys_to_delete:
-                if k in state_dict:
-                    del state_dict[k]
-
-            # Load the salvaged weights
-            missing, unexp = model.load_state_dict(state_dict, strict=False)
-            print("[*] Stripped mismatched d4_head weights. Retaining backbone and other heads.")
-            if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
-                model.load_state_dict(ckpt["model_state_dict"])
-                print("[+] Loaded model weights from checkpoint.")
-                opt_state = ckpt.get("optimizer_state_dict") or ckpt.get("optimizer")
-                if opt_state is not None:
-                    try:
-                        optimizer.load_state_dict(opt_state)
-                        print("[+] Restored optimizer state.")
-                    except Exception as e:
-                        print(f"[!] Warning: Could not restore optimizer state: {e}")
-            elif isinstance(ckpt, dict):
-                missing, unexp = model.load_state_dict(ckpt, strict=False)
-                print(f"[+] Loaded model weights ({len(ckpt)} keys, missing={len(missing)}, unexpected={len(unexp)}).")
-        else:
-            print(f"[!] Warning: Resume checkpoint not found at: {resume_path}")
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -598,25 +651,25 @@ def train_selen_lpr(
 
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
-                preds = model(images, targets=targets)
+                preds = model(images)
                 loss_dict = criterion(preds, targets)
                 loss = loss_dict["loss"]
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+            torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=2.0)
+            scale_before = scaler.get_scale()
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
+            scale_after = scaler.get_scale()
+            if scale_before <= scale_after:
+                scheduler.step()
 
             train_loss += loss.item()
             train_batches += 1
             pbar.set_postfix({
-                "loss": f"{loss.item():.3f}",
-                "typ": f"{loss_dict['loss_type'].item():.2f}",
-                "d3": f"{loss_dict['loss_d3'].item():.2f}",
-                "d4": f"{loss_dict['loss_d4'].item():.2f}",
-                "prv": f"{loss_dict['loss_prov'].item():.2f}"
+                "loss": f"{loss.item():.4f}",
+                "ctc": f"{loss_dict['loss_ctc'].item():.4f}"
             })
 
         avg_train_loss = train_loss / max(train_batches, 1)
@@ -647,15 +700,32 @@ def train_selen_lpr(
 
                 # Accuracy evaluation
                 pred_type = v_preds["type_logits"].argmax(dim=-1)
-                pred_d3 = v_preds["d3_logits"].argmax(dim=-1)
-                pred_d4 = v_preds["d4_logits"].argmax(dim=-1)
                 pred_prov = v_preds["prov_logits"].argmax(dim=-1)
+                pred_pairs = decode_and_split_ctc(v_preds["ctc_logits"], CTC_IDX_TO_CHAR, blank_idx=CTC_BLANK_IDX)
 
                 for b in range(val_img.shape[0]):
                     is_t = (pred_type[b] == v_batch["type"][b]).item()
-                    is_3 = (pred_d3[b] == v_batch["d3"][b]).all().item()
-                    is_4 = (pred_d4[b] == v_batch["d4"][b]).all().item()
                     is_p = (pred_prov[b] == v_batch["prov"][b]).item()
+
+                    # Ground truth deterministic split
+                    tgt_len = v_batch["target_lengths"][b].item()
+                    gt_tokens = v_batch["seq_targets"][b][:tgt_len].cpu().tolist()
+                    gt_full = "".join(CTC_IDX_TO_CHAR.get(k, "") for k in gt_tokens)
+                    last_thai_idx = -1
+                    for i, ch in enumerate(gt_full):
+                        if "\u0e01" <= ch <= "\u0e2e":
+                            last_thai_idx = i
+                    if last_thai_idx != -1:
+                        gt_d3 = gt_full[:last_thai_idx + 1]
+                        gt_d4 = gt_full[last_thai_idx + 1:]
+                    else:
+                        gt_d3 = ""
+                        gt_d4 = gt_full
+
+                    pred_d3, pred_d4 = pred_pairs[b]
+
+                    is_3 = (pred_d3 == gt_d3)
+                    is_4 = (pred_d4 == gt_d4)
 
                     if is_t: correct_type += 1
                     if is_3: correct_d3 += 1
@@ -689,24 +759,29 @@ def train_selen_lpr(
         history.append(epoch_record)
 
         # Checkpoints
-        torch.save(model.state_dict(), out_dir / "last_reader.pth")
-        if avg_val_loss < best_val_loss or acc_exact > best_exact_acc:
-            best_val_loss = min(avg_val_loss, best_val_loss)
-            best_exact_acc = max(acc_exact, best_exact_acc)
-            torch.save(model.state_dict(), out_dir / "best_reader.pth")
-            torch.save(model.state_dict(), export_path)
-            print(f"[SAVE] New best checkpoint saved to: {export_path}")
+        if not dry_run:
+            torch.save(model.state_dict(), out_dir / "last_reader.pth")
+            if avg_val_loss < best_val_loss or acc_exact > best_exact_acc:
+                best_val_loss = min(avg_val_loss, best_val_loss)
+                best_exact_acc = max(acc_exact, best_exact_acc)
+                torch.save(model.state_dict(), out_dir / "best_reader.pth")
+                torch.save(model.state_dict(), export_path)
+                print(f"[{get_utc_timestamp()}] [SAVE] New best checkpoint saved to: {export_path}")
+        else:
+            torch.save(model.state_dict(), out_dir / "dry_run_reader.pth")
+            print(f"[{get_utc_timestamp()}] [DRY-RUN] Verified checkpoint saved to: {out_dir / 'dry_run_reader.pth'}")
 
     total_time = time.time() - t_start
-    best_hash = calculate_sha256(export_path)
+    best_hash = calculate_sha256(export_path) if export_path.is_file() else "N/A"
 
     # Save summary metadata
     summary = {
         "model_name": "selen-lpr-0.0.1",
-        "architecture": "SelenLPR (Pretrained MobileNetV3 + Transformer Multi-Task Attention)",
-        "loss_function": f"SelenMultiTaskLoss (mode={loss_mode})",
+        "architecture": "SelenLPR (MobileNetV3 + Transformer Context + 2-Layer BiLSTM LeftToRightCTCHead)",
+        "loss_function": "SelenMultiTaskLoss (nn.CTCLoss)",
         "loss_mode": loss_mode,
         "parameters": params_count,
+        "trainable_parameters": sum(p.numel() for p in trainable_params),
         "model_size_mb": round(params_count * 4 / (1024 * 1024), 2),
         "epochs": epochs,
         "batch_size": batch_size,
@@ -721,7 +796,7 @@ def train_selen_lpr(
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
     print("\n" + "=" * 80)
-    print("      SELEN-LPR-0.0.1 TRAINING COMPLETE")
+    print(f"[{get_utc_timestamp()}] SELEN-LPR-0.0.1 TRAINING COMPLETE")
     print("=" * 80)
     print(f"Total Time      : {total_time:.2f} s ({total_time/60:.2f} min)")
     print(f"Best Val Loss   : {best_val_loss:.4f}")
@@ -733,13 +808,14 @@ def train_selen_lpr(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train selen-lpr-0.0.1 on Multi-Source LPR Dataset")
+    parser = argparse.ArgumentParser(description="Train selen-lpr-0.0.1 with Unified Left-to-Right CTC Head")
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=0.0005)
-    parser.add_argument("--loss-mode", type=str, default="homoscedastic", choices=["static", "homoscedastic"])
+    parser.add_argument("--loss-mode", type=str, default="ctc")
     parser.add_argument("--resume", type=str, default="", help="Path to checkpoint")
     parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--dry-run", action="store_true", help="Run 1-epoch dry run for verification")
     args = parser.parse_args()
 
     data_directories = [
@@ -759,5 +835,6 @@ if __name__ == "__main__":
         lr=args.lr,
         device=args.device,
         loss_mode=args.loss_mode,
-        resume=args.resume
+        resume=args.resume,
+        dry_run=args.dry_run
     )

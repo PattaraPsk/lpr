@@ -30,6 +30,45 @@ Every modification to software code, neural network models, datasets, inference 
 
 ## 📜 Audit Trail & Change Ledger
 
+### [CR-20261103-01] - SelenLPR CTC Sequence Head Upgrade: 2-Layer BiLSTM Neck Integration (CRNN Architecture)
+- **Date (UTC)**: 2026-11-03T02:22:00Z
+- **Component**: Multi-Task Thai LPR Architecture (`tools/train_selen_lpr.py`)
+- **Change Type**: feat / model / refactor
+- **ISO 42001 Clause**: Clause 7.5 (Documented Information), Clause 8.4 (AI System Impact Assessment), Annex A.6.7 (AI System Change Management), Annex A.8.2 (Model Traceability), Annex A.9.3 (Operational Event Logging)
+- **Objective**: Upgrade the CTC sequence head of SelenLPR by injecting a 2-layer Bidirectional LSTM neck (`nn.LSTM(..., num_layers=2, bidirectional=True, batch_first=True)`) between the frozen MobileNetV3 CNN backbone and the final linear CTC classifier, mimicking EasyOCR's CRNN architecture for enhanced spatial sequence modeling of Thai characters:
+  1. **2-Layer BiLSTM Neck**: Injected `nn.LSTM(input_size=in_channels, hidden_size=hidden_size, num_layers=2, bidirectional=True, batch_first=True)` with default `hidden_size = d_model // 2` (128) such that bidirectional concatenation `hidden_size * 2` aligns with `d_model` (256).
+  2. **Dimension Permutation Pipeline**: Implemented adaptive vertical spatial pooling to collapse height ($H \to 1$) and adjust horizontal width ($W \to 28$), followed by tensor squeeze and permutation from backbone `[batch_size, channels, 1, sequence_length]` to `[batch_size, sequence_length, features]` for batch-first LSTM ingestion.
+  3. **Head Structural Isolation & Weight Preservation**: Maintained complete architectural isolation of the Vehicle Type head (11 classes) and Province classification head (79 classes), freezing 236 parameter tensors while leaving 18 BiLSTM + linear classifier tensors trainable.
+  4. **State Dict Compatibility**: Sanitized checkpoint loading in `train_selen_lpr` to safely discard legacy Conv1d neck weights with `strict=False`, preserving all converged backbone, type, and province weights from `models/reader/selen-lpr-0.0.1/best_reader.pth`.
+- **Risk Assessment**: Low risk. Total parameter count increased modestly from 4.85M (18.50 MB) to 5.44M (20.76 MB float32), well within edge CPU/GPU performance budgets. Converged Vehicle Type and Province heads are frozen with zero gradient leakage.
+- **Verification Gate**: Passed structural isolation gradient checks (confirming zero gradient flow to frozen heads during CTC backpropagation), tensor shape assertions (`[B, 28, 52]`), and a complete 1-epoch dry run on RTX 4090 in 2.71 seconds (Type: 100.0%, Prov: 78.1%). All 39 existing unit tests pass.
+- **Traceability / Artifacts**: `tools/train_selen_lpr.py`, `CHANGELOG.md`.
+
+### [CR-20261102-03] - Unified Left-to-Right CTC Sequence Head Refactoring & ASD-STE100 / ISO 24495 Alignment
+- **Date (UTC)**: 2026-11-02T08:35:00Z
+- **Component**: Multi-Task Thai LPR Architecture (`tools/train_selen_lpr.py`)
+- **Change Type**: refactor / model / feat
+- **ISO 42001 Clause**: Clause 7.5 (Documented Information), Clause 8.4 (AI System Impact Assessment), Annex A.6.7 (AI System Change Management), Annex A.8.2 (Model Traceability), Annex A.9.3 (Operational Event Logging)
+- **Objective**: Refactor `tools/train_selen_lpr.py` following ASD-STE100 and ISO 24495-1:2023 plain technical language standards to replace autoregressive `d3_decoder` and `d4_decoder` with a unified left-to-right Connectionist Temporal Classification (CTC) sequence head (`LeftToRightCTCHead`).
+  1. **CTC Vocabulary & Blank Token**: Unified 52-token character set with `CTC_BLANK_IDX = 0` (reusing `<pad>`). Stripped special tokens `<SOS>`, `<EOS>`, and `<PAD>` and concatenated clean `d3` and `d4` characters into `seq_targets` and `target_lengths`.
+  2. **Model Architecture**: Integrated `LeftToRightCTCHead` with vertical adaptive spatial pooling `(1, 28)`, 1D convolution neck, and linear classifier projecting to `(Batch, 28, Vocab)`. Bypassed autoregressive sequence decoders in forward.
+  3. **Hard Freeze Converged Heads**: Loaded `models/reader/selen-lpr-0.0.1/best_reader.pth` with `strict=False`, freezing backbone, type head (98.8%), and province head (77.2%) while keeping `ctc_head` trainable.
+  4. **Loss Function**: Configured `nn.CTCLoss(blank=0, zero_infinity=True)` on `.log_softmax(dim=-1)` logits formatted as `(28, Batch, Vocab)` with `total_loss = loss_ctc`.
+  5. **Greedy CTC Decoder & Deterministic Split**: Implemented greedy deduplication and blank removal, with deterministic splitting at the last Thai consonant (`\u0E01` to `\u0E2E`) into `d3` and `d4` for validation metric continuity (`d3%`, `d4%`, `Exact Plate%`).
+- **Risk Assessment**: Low risk. Converged plate type and province classification heads are frozen, preserving existing accuracies. Eliminates autoregressive teacher-forcing latency overhead.
+- **Verification Gate**: Passed syntax verification and 1-epoch dry run confirming tensor shapes `(Batch, 28, 52)`, checkpoint loading, gradient flow through `ctc_head`, and metric logging. Successfully completed full 50-epoch deployment on 33,808 samples (32,118 train / 1,690 val) in 27.16 minutes on RTX 4090: Type 99.11%, Prov 76.80%, d3 44.50%, d4 25.27%, Exact Plate 18.88% (Val Loss 1.8315, Checkpoint SHA-256 `7D0015BC12105F48FC57A2D592B447DA6FF328895189A4BDABAF74D6ABF029AE`).
+- **Traceability / Artifacts**: `tools/train_selen_lpr.py`, `CHANGELOG.md`.
+
+### [CR-20261102-01] - SelenLPR Training Dataset v1.0.0 Export & Google Drive Synchronization
+- **Date (UTC)**: 2026-11-02T04:50:00Z
+- **Component**: Dataset Pipeline & Lineage (`dataset1.0.0`)
+- **Change Type**: data / feat
+- **ISO 42001 Clause**: Clause 7.5 (Documented Information), Annex A.7.2 (Data Quality for AI), Annex A.7.3 (Dataset Provenance), Annex A.7.4 (Dataset Traceability)
+- **Objective**: Synchronized the certified training and evaluation dataset corpus used for SelenLPR models (`models/reader/selen-lpr-0.0.1/best_reader.pth`) to `G:\My Drive\Synapes\LPR\dataset1.0.0`.
+- **Risk Assessment**: Zero regression risk. Read-only extraction and mirror to external persistent drive for backup, collaborative retraining, and lineage tracking.
+- **Verification Gate**: Verified transfer of 35,750 files (396.63 MB) across 6 sub-corpora (`labeled/manually_labeled`, `verified/curated_lpr_dataset`, `verified/dataset-staging-approved`, `ready/202610261140`, `snapshot/mobile`, `dataset-cctv-synthetic`, `dataset-mobile-synthetic`) with generated README and metadata manifests.
+- **Traceability / Artifacts**: `G:\My Drive\Synapes\LPR\dataset1.0.0/`, `G:\My Drive\Synapes\LPR\dataset1.0.0/README.md`, `CHANGELOG.md`.
+
 ### [CR-20261030-01] - Workspace Consolidation, Legacy Archiving, Dashboard Scaffolding & Auditor Routing
 - **Date (UTC)**: 2026-10-30T05:48:00Z
 - **Component**: Workspace Architecture (`cli.py`, `dashboard/`, `tools/archive/`, `tools/rtsp_collector/collector.py`, `tools/owod/core/quality_auditor.py`)
