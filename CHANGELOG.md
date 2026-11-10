@@ -30,6 +30,48 @@ Every modification to software code, neural network models, datasets, inference 
 
 ## 📜 Audit Trail & Change Ledger
 
+### [CR-20261110-04] - SelenCORE LPR Integration Package & Developer Manual
+- **Date (UTC)**: 2026-11-10T04:37:00Z
+- **Component**: Integration / API Layer / Documentation (`selencore/`, `docs/SELENCORE_LPR_MANUAL.md`)
+- **Change Type**: feature / docs
+- **ISO 42001 Clause**: Annex A.9.3 (Operational Event Logging), Clause 8.4 (AI System Development), Clause 7.5 (Documented Information)
+- **Objective**: Isolate the full Thai LPR detection and OCR reader pipeline into a stable `selencore/` integration adapter for embedding into SelenCORE or any external system without requiring access to the interactive demo UI. Author a complete developer manual covering model I/O contracts, pipeline architecture, the SelenCORE adapter API, quick-start examples, per-component direct call reference, JSON wire format, Thai DLT domain rules, configuration thresholds, error handling, and thread safety requirements.
+- **Implementation & Deliverables**:
+  1. **`selencore/__init__.py`**: Public package exposing `LPREngine`, `LPRResult`, `Detection`, and `PlateReading` as the sole integration boundary.
+  2. **`selencore/lpr_engine.py`**: `LPREngine` class wrapping the full pipeline (MOG2 motion filter → YOLOv8s vehicle detector → YOLOv11n plate detector → `PlateReader` OCR) behind a single `process_frame(bgr_numpy) → LPRResult` call. Supports `from_default_models()` and `from_paths()` constructors, optional ROI, `run_ocr=False` detector-only mode, and `coarse_to_fine` toggle.
+  3. **`docs/SELENCORE_LPR_MANUAL.md`**: Full integration manual with pipeline ASCII diagram, detector/OCR I/O contracts (NormalizePAD, token schema, province normalisation), SelenCORE adapter dataclass reference, 5 quick-start code examples, 5 per-component advanced call examples, JSON output schema, Thai DLT domain rules table, and thread safety guidance.
+- **Risk Assessment**: Adapter wraps existing internal helpers only — no model weights modified, no inference logic changed, `PlateReader` singleton contract preserved. `LPREngine` is intentionally not thread-safe; each camera worker must instantiate its own engine instance.
+- **Verification Gate**: Manual import of `selencore.LPREngine` verified in project venv; `process_frame()` integration path validated against `tools/alpr/detector.py` and `tools/DataManipulator/app/plate_reader.py` function signatures.
+- **Traceability / Artifacts**: `selencore/__init__.py`, `selencore/lpr_engine.py`, `docs/SELENCORE_LPR_MANUAL.md`, `CHANGELOG.md`
+
+### [CR-20261110-03] - Export Step-by-Step Antigravity Development Process Guide
+- **Date (UTC)**: 2026-11-10T04:26:00Z
+- **Component**: Documentation / Developer Experience / Engineering Methodology (docs/ANTIGRAVITY_DEV_PROCESS.md, docs/README.md)
+- **Change Type**: docs / gov
+- **ISO 42001 Clause**: Clause 7.5 (Documented Information), Annex A.6.7 (AI System Change Management), Annex A.8 (AI Transparency & Stakeholder Documentation)
+- **Objective**: Author a comprehensive, step-by-step developer guide detailing how to use Google Antigravity (AGY) throughout the Thai LPR development lifecycle, covering context scoping, interactive artifacts, subagent delegation, hardware execution, automated compliance gates, and ISO 42001 change control.
+- **Implementation & Deliverables**:
+  1. **Development Guide (docs/ANTIGRAVITY_DEV_PROCESS.md)**: Formulated 6-phase engineering lifecycle (Task Inception, Architectural Planning, Agentic Implementation, Tool Execution, Automated QA Gates, Audit Logging & Git Sync).
+  2. **Domain-Specific Playbooks**: Added practical scenarios for OCR model training, synthetic dataset generation, PyQt6 GUI enhancements, and RTSP stream debugging.
+  3. **Antigravity Tooling Reference**: Cataloged slash commands (/plan, /boost, /grill-me, /teamwork), subagent roles (self, research), and project guardrails.
+  4. **Documentation Index Update (docs/README.md)**: Indexed new development process guide.
+- **Risk Assessment**: Zero runtime performance impact; streamlines team onboarding and enforces auditable development standards.
+- **Verification Gate**: Markdown syntactically validated; file cross-references verified; unit test suite passing.
+
+### [CR-20261110-02] - Export Comprehensive Documentation on Labeling Process, Synthetic Data Generation & Standards Compliance
+- **Date (UTC)**: 2026-11-10T04:14:00Z
+- **Component**: Documentation / Data Governance / Technical Manuals (docs/LABELING_AND_SYNTHETIC_DATA.md, docs/README.md)
+- **Change Type**: docs / gov
+- **ISO 42001 Clause**: Clause 7.5 (Documented Information), Annex A.7 (Data for AI Systems), Annex A.8 (AI Transparency, Explainability & Stakeholder Documentation)
+- **Objective**: Formulate and export full technical documentation detailing the Thai LPR dataset labeling architecture, parametric synthetic generation pipelines (70:30 ratio curriculum), and complete International Standards Compliance Matrix (ISO/IEC 42001, 5259-2, 25012, 3166-2:TH, 10646 NFC, 8601, 27001, 14496-14, 29119, and DLT specifications).
+- **Implementation & Deliverables**:
+  1. **Documentation Export (docs/LABELING_AND_SYNTHETIC_DATA.md)**: Full technical specification covering data ingestion, auto-cropping, VLM-assisted pre-labeling, human-in-the-loop verification (DataManipulator), 5-element file naming scheme ({name}_{plate_type}_{d3}_{d4}_{province}.jpg), rejection classes (- - - - and + + + +), and session persistence.
+  2. **Synthetic Data Engine Details**: Formally documented the 3D physical camera calibration (4mm lens, pitch/yaw/roll), vector DLT font suites, environmental degradation synthesizer, and the 70:30 Golden Ratio curriculum (120k Clean Anchor : 50k CCTV Add-on) resolving the real-world domain gap.
+  3. **Standards Compliance Matrix**: Cataloged standards compliance mappings, verification locations, and enforcement mechanisms across 10 international and statutory standards.
+  4. **Documentation Index (docs/README.md)**: Created central index connecting all technical specifications, model catalogs, and change logs.
+- **Risk Assessment**: Zero runtime impact; enhances system auditability, regulatory transparency, and developer onboarding without introducing external dependencies.
+- **Verification Gate**: Markdown syntactically validated; file paths verified; Mermaid diagrams verified.
+
 ### [CR-20261110-01] - SelenOCR v0.1.1 Training on Combined 170k Dataset (96.70% Real CCTV & 99.65% Clean Accuracy)
 - **Date (UTC)**: 2026-11-09T18:05:00Z
 - **Component**: AI OCR Reading Engine / CCTV Domain Adaptation (`models/reader/selen_ocr_v011/best_reader.pth`, `tools/train_selen_ocr_v011.py`, `tools/evaluate_selen_ocr_on_all_datasets.py`, `runs/selen_ocr_v011_cross_dataset_benchmark.json`, `models/MODEL_CATALOG.md`)
