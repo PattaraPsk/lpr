@@ -1,0 +1,86 @@
+{
+  "202610261140": {
+    "total_samples": 1183,
+    "exact_match_pct": 96.7,
+    "registration_pct": 96.96,
+    "d3_pct": 97.72,
+    "d4_pct": 98.31,
+    "province_pct": 99.32,
+    "type_pct": 99.58,
+    "avg_latency_ms": 1.22,
+    "fps": 822.8,
+    "description": "Real Anchor Verified CCTV Plates (1,183 images)"
+  },
+  "202611030335": {
+    "total_samples": 2000,
+    "exact_match_pct": 15.6,
+    "registration_pct": 22.25,
+    "d3_pct": 27.6,
+    "d4_pct": 31.45,
+    "province_pct": 32.6,
+    "type_pct": 51.0,
+    "avg_latency_ms": 0.88,
+    "fps": 1136.5,
+    "description": "Expanded Real Verified CCTV/Mobile (2,000 sampled)"
+  },
+  "dataset-cctv-synthetic": {
+    "total_samples": 1500,
+    "exact_match_pct": 13.53,
+    "registration_pct": 24.2,
+    "d3_pct": 33.13,
+    "d4_pct": 35.4,
+    "province_pct": 35.13,
+    "type_pct": 64.07,
+    "avg_latency_ms": 0.81,
+    "fps": 1229.6,
+    "description": "CCTV Profile Synthetic Benchmark (1,500 images)"
+  },
+  "dataset-mobile-synthetic": {
+    "total_samples": 1500,
+    "exact_match_pct": 23.4,
+    "registration_pct": 42.33,
+    "d3_pct": 50.27,
+    "d4_pct": 61.27,
+    "province_pct": 42.8,
+    "type_pct": 68.87,
+    "avg_latency_ms": 0.91,
+    "fps": 1104.3,
+    "description": "Mobile Camera Synthetic Benchmark (1,500 images)"
+  },
+  "dataset-dirty10-blur5-angle5": {
+    "total_samples": 2000,
+    "exact_match_pct": 68.75,
+    "registration_pct": 74.45,
+    "d3_pct": 84.95,
+    "d4_pct": 79.25,
+    "province_pct": 81.95,
+    "type_pct": 90.2,
+    "avg_latency_ms": 0.84,
+    "fps": 1193.3,
+    "description": "Degraded Environmental Benchmark (2,000 sampled)"
+  },
+  "dataset-v3.0-synthetic-clean": {
+    "total_samples": 2000,
+    "exact_match_pct": 99.65,
+    "registration_pct": 99.65,
+    "d3_pct": 99.95,
+    "d4_pct": 99.65,
+    "province_pct": 100.0,
+    "type_pct": 100.0,
+    "avg_latency_ms": 1.02,
+    "fps": 979.3,
+    "description": "Clean Synthetic Target Benchmark (2,000 stratified)"
+  },
+  "dataset-v3.1-cctv-addon": {
+    "total_samples": 2000,
+    "exact_match_pct": 73.35,
+    "registration_pct": 73.85,
+    "d3_pct": 93.4,
+    "d4_pct": 75.45,
+    "province_pct": 99.4,
+    "type_pct": 99.95,
+    "avg_latency_ms": 0.87,
+    "fps": 1148.5,
+    "description": "CCTV & Low-Resolution Add-on (2,000 sampled)"
+  }
+}

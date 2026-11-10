@@ -188,3 +188,79 @@ def match_province_value(text: str) -> str:
             return th_norm
 
     return text_clean
+
+
+# Official DLT (Department of Land Transport) International License Plate Mapping
+# Translates Thai consonants to Latin / Romanized characters for cross-border transit
+DLT_CONSONANT_TO_INTL: Dict[str, str] = {
+    "ก": "A", "ข": "B", "ฃ": "B", "ค": "C", "ฅ": "C", "ฆ": "13",
+    "ง": "D", "จ": "E", "ฉ": "F", "ช": "G", "ซ": "G", "ฌ": "H",
+    "ญ": "11", "ฎ": "I", "ฏ": "I", "ฐ": "J", "ฑ": "J", "ฒ": "12",
+    "ณ": "K", "ด": "L", "ต": "M", "ถ": "N", "ท": "O", "ธ": "P",
+    "น": "Q", "บ": "R", "ป": "S", "ผ": "T", "ฝ": "T", "พ": "U",
+    "ฟ": "V", "ภ": "W", "ม": "X", "ย": "Y", "ร": "Z", "ล": "1",
+    "ว": "2", "ศ": "3", "ษ": "4", "ส": "5", "ห": "6", "ฬ": "7",
+    "อ": "8", "ฮ": "9",
+}
+
+
+def convert_d3_to_dlt_intl(d3: str) -> str:
+    """
+    Converts Thai plate d3 consonants to DLT International transliteration.
+    Handles paired special consonants (ญญ -> V1, ฒฒ -> V2, ฆฆ -> V3).
+    """
+    if not d3:
+        return ""
+    if d3 in ["+", "-"]:
+        return d3
+
+    cleaned = normalize_thai_script(d3).replace(" ", "")
+    # DLT paired special series
+    if "ญญ" in cleaned:
+        cleaned = cleaned.replace("ญญ", "V1")
+    if "ฒฒ" in cleaned:
+        cleaned = cleaned.replace("ฒฒ", "V2")
+    if "ฆฆ" in cleaned:
+        cleaned = cleaned.replace("ฆฆ", "V3")
+
+    res = []
+    for c in cleaned:
+        if c.isalnum() and ord(c) < 128:
+            res.append(c)
+        elif c in DLT_CONSONANT_TO_INTL:
+            res.append(DLT_CONSONANT_TO_INTL[c])
+        elif c in ["_", "-", "+"]:
+            res.append(c)
+        else:
+            # Fallback preserving character if ASCII or safe
+            res.append(c if ord(c) < 128 else "_")
+    return "".join(res)
+
+
+def convert_to_dlt_international_plate(
+    d3: str,
+    d4: str,
+    province: str,
+    default_prov: str = "TH-UNKNOWN"
+) -> str:
+    """
+    Converts Thai license plate components to the DLT International + ISO 3166-2:TH format.
+    Ensures filenames are 100% ASCII-clean with zero combining vowel / tone mark mangling.
+
+    Format: {d3_intl}_{d4}_{ISO3166}
+    Example: '1กข', '1234', 'ชลบุรี' -> '1AB_1234_TH-20'
+    """
+    intl_d3 = convert_d3_to_dlt_intl(d3) or "plate"
+    intl_d4 = (d4 or "").strip() or "0"
+
+    prov_clean = (province or "").strip()
+    if prov_clean in ["+", "-"]:
+        iso_code = prov_clean
+    else:
+        canonical = match_province_value(prov_clean)
+        iso_code = get_iso_code(canonical) if canonical else None
+        if not iso_code:
+            iso_code = prov_clean if (prov_clean and prov_clean.isalnum() and ord(prov_clean[0]) < 128) else default_prov
+
+    return f"{intl_d3}_{intl_d4}_{iso_code}"
+

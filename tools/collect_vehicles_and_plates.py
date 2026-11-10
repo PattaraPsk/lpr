@@ -41,8 +41,14 @@ try:
 except Exception:
     pass
 
+from tools.alpr import MotionDetector, compute_crop_sharpness
+from tools.alpr.config import resolve_model_path, READER_CANDIDATES, VEHICLE_CANDIDATES, DETECTOR_CANDIDATES
 from tools.DataManipulator.app.plate_reader import PlateReader
-from tools.DataManipulator.app.provinces import normalize_thai_script, match_province_value
+from tools.DataManipulator.app.provinces import (
+    normalize_thai_script,
+    match_province_value,
+    convert_to_dlt_international_plate,
+)
 
 
 def imwrite_safe(file_path: Path, img: np.ndarray) -> bool:
@@ -157,6 +163,8 @@ class VehicleTrackRecord:
         self.best_plate_crop: Optional[np.ndarray] = None
         self.best_plate_box: Optional[List[float]] = None
         self.best_plate_conf = 0.0
+        self.best_plate_sharpness = 0.0
+        self.best_car_sharpness = 0.0
         self.best_reading_score = 0.0
         self.best_ocr_res: Dict[str, Any] = {}
         self.best_orientation = "unknown"
@@ -169,7 +177,9 @@ class VehicleTrackRecord:
         area = (veh_box[2] - veh_box[0]) * (veh_box[3] - veh_box[1])
         
         # If no plate yet, keep the largest clear car crop
-        if not self.has_plate and area > self.max_car_area:
+        car_sharpness = compute_crop_sharpness(car_crop)
+        if not self.has_plate and car_sharpness > self.best_car_sharpness:
+            self.best_car_sharpness = car_sharpness
             self.max_car_area = area
             self.best_veh_frame = frame_idx
             self.best_veh_sec = timestamp_sec
@@ -185,18 +195,16 @@ class VehicleTrackRecord:
         plate_box: List[float],
         plate_crop: np.ndarray,
         plate_conf: float,
-        ocr_res: Dict[str, Any],
         orientation: str,
-        score: float
+        plate_sharpness: float
     ):
         self.plate_eval_attempts += 1
-        if score > self.best_reading_score or not self.has_plate:
+        if plate_sharpness > self.best_plate_sharpness or not self.has_plate:
+            self.best_plate_sharpness = plate_sharpness
             self.has_plate = True
-            self.best_reading_score = score
             self.best_plate_conf = plate_conf
             self.best_plate_crop = plate_crop.copy()
             self.best_plate_box = plate_box
-            self.best_ocr_res = ocr_res
             self.best_orientation = orientation
             self.best_veh_frame = frame_idx
             self.best_veh_sec = timestamp_sec
@@ -213,6 +221,19 @@ class VehicleTrackRecord:
         c_y1 = (self.boxes[-1][1] + self.boxes[-1][3]) / 2.0
         dist = ((c_x1 - c_x0) ** 2 + (c_y1 - c_y0) ** 2) ** 0.5
         return dist < threshold_px
+
+    def total_displacement(self) -> float:
+        if len(self.boxes) < 2:
+            return 0.0
+        c_x0 = (self.boxes[0][0] + self.boxes[0][2]) * 0.5
+        c_y0 = (self.boxes[0][1] + self.boxes[0][3]) * 0.5
+        c_x1 = (self.boxes[-1][0] + self.boxes[-1][2]) * 0.5
+        c_y1 = (self.boxes[-1][1] + self.boxes[-1][3]) * 0.5
+        return float(((c_x1 - c_x0) ** 2 + (c_y1 - c_y0) ** 2) ** 0.5)
+
+    def is_passing(self, min_displacement: float = 100.0, min_hits: int = 2) -> bool:
+        """Verifies if the vehicle actively passed the camera FOV."""
+        return len(self.boxes) >= min_hits and self.total_displacement() >= min_displacement
 
 
 def process_single_video(
@@ -252,6 +273,7 @@ def process_single_video(
     print(f"Output Dir : {video_out_dir}")
     print(f"{'='*75}\n")
 
+    motion_detector = MotionDetector(history=200, var_threshold=25.0, min_motion_area=350.0)
     active_tracks: Dict[int, VehicleTrackRecord] = {}
     completed_tracks: List[VehicleTrackRecord] = []
     stationary_registry: List[VehicleTrackRecord] = []
@@ -278,6 +300,24 @@ def process_single_video(
         sampled_count += 1
         frame_sec = round(f_idx / max(fps, 1.0), 2)
 
+        # Moving object pre-filter (foreground extraction)
+        has_motion, motion_boxes, _ = motion_detector.update(frame)
+        if f_idx < 50:
+            f_idx += 1
+            pbar.update(1)
+            continue
+
+        if not has_motion:
+            # Check for inactive tracks when no motion is in frame
+            expired_ids = [tid for tid, trk in active_tracks.items() if f_idx - trk.last_frame > 25]
+            for tid in expired_ids:
+                finished = active_tracks.pop(tid)
+                if finished.is_passing(min_displacement=80.0, min_hits=2):
+                    completed_tracks.append(finished)
+            f_idx += 1
+            pbar.update(1)
+            continue
+
         # Vehicle detection with ByteTrack persistence
         res = veh_model.track(
             frame,
@@ -303,6 +343,12 @@ def process_single_video(
                 bh = box[3] - box[1]
                 # Filter out tiny distant noise
                 if bw < 100 or bh < 60:
+                    continue
+
+                # Motion gate: verify candidate is actively moving or already tracked
+                is_active = trk_id in active_tracks
+                is_moving = motion_detector.is_moving(box.tolist(), motion_boxes)
+                if not (is_active or is_moving):
                     continue
 
                 current_frame_track_ids.add(trk_id)
@@ -333,8 +379,8 @@ def process_single_video(
                     record = active_tracks[trk_id]
                     record.update_box(f_idx, frame_sec, [float(c) for c in box], car_crop)
 
-                # Plate & orientation detection on vehicle crop (rate-limited to 6 evaluations per track)
-                if record.plate_eval_attempts < 6:
+                # Plate detection & sharpness selection (only on moving frames)
+                if is_moving:
                     p_res = plate_model(car_crop, conf=0.20, verbose=False, device=device)[0]
                     best_pb, best_pc, orient_name = None, 0.0, "unknown"
                     for pb in p_res.boxes:
@@ -349,39 +395,34 @@ def process_single_video(
                             orient_name = p_lbl
 
                     if best_pb is not None:
-                        # 6% padding for plate crop
-                        pbw = best_pb[2] - best_pb[0]
-                        pbh = best_pb[3] - best_pb[1]
-                        px1 = max(0, int(best_pb[0]) - int(pbw * 0.06))
-                        py1 = max(0, int(best_pb[1]) - int(pbh * 0.06))
-                        px2 = min(car_crop.shape[1], int(best_pb[2]) + int(pbw * 0.06))
-                        py2 = min(car_crop.shape[0], int(best_pb[3]) + int(pbh * 0.06))
+                        # Zero padding for license plate crop as per Thai LPR Edge specification
+                        px1 = max(0, int(best_pb[0]))
+                        py1 = max(0, int(best_pb[1]))
+                        px2 = min(car_crop.shape[1], int(best_pb[2]))
+                        py2 = min(car_crop.shape[0], int(best_pb[3]))
                         plate_crop = car_crop[py1:py2, px1:px2]
 
                         if plate_crop.size > 0:
-                            # Map coordinates back to full frame
-                            abs_p_box = [
-                                float(cx1 + px1),
-                                float(cy1 + py1),
-                                float(cx1 + px2),
-                                float(cy1 + py2)
-                            ]
-                            # Run Thai OCR Reader
-                            crop_rgb = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2RGB)
-                            ocr_out = ocr_reader.predict(Image.fromarray(crop_rgb))
-                            score = compute_reading_score(plate_crop, ocr_out, abs_p_box)
-                            record.update_plate(
-                                frame_idx=f_idx,
-                                timestamp_sec=frame_sec,
-                                veh_box=[float(c) for c in box],
-                                car_crop=car_crop,
-                                plate_box=abs_p_box,
-                                plate_crop=plate_crop,
-                                plate_conf=best_pc,
-                                ocr_res=ocr_out,
-                                orientation=orient_name,
-                                score=score
-                            )
+                            plate_sharpness = compute_crop_sharpness(plate_crop)
+                            # Only record snapshot candidate when current frame establishes a new sharpness peak
+                            if plate_sharpness > record.best_plate_sharpness or not record.has_plate:
+                                abs_p_box = [
+                                    float(cx1 + px1),
+                                    float(cy1 + py1),
+                                    float(cx1 + px2),
+                                    float(cy1 + py2)
+                                ]
+                                record.update_plate(
+                                    frame_idx=f_idx,
+                                    timestamp_sec=frame_sec,
+                                    veh_box=[float(c) for c in box],
+                                    car_crop=car_crop,
+                                    plate_box=abs_p_box,
+                                    plate_crop=plate_crop,
+                                    plate_conf=best_pc,
+                                    orientation=orient_name,
+                                    plate_sharpness=plate_sharpness
+                                )
                     else:
                         record.plate_eval_attempts += 1
 
@@ -393,18 +434,7 @@ def process_single_video(
 
         for tid in expired_ids:
             finished = active_tracks.pop(tid)
-            # Spatial deduplication for stationary/parked vehicles
-            if finished.is_stationary():
-                is_duplicate = False
-                for stat in stationary_registry:
-                    iou = compute_iou(finished.best_veh_box, stat.best_veh_box)
-                    if iou > 0.50:
-                        is_duplicate = True
-                        break
-                if not is_duplicate:
-                    stationary_registry.append(finished)
-                    completed_tracks.append(finished)
-            else:
+            if finished.is_passing(min_displacement=80.0, min_hits=2):
                 completed_tracks.append(finished)
 
         f_idx += 1
@@ -415,21 +445,19 @@ def process_single_video(
 
     # Finalize remaining active tracks
     for tid, finished in active_tracks.items():
-        if finished.is_stationary():
-            is_dup = False
-            for stat in stationary_registry:
-                if compute_iou(finished.best_veh_box, stat.best_veh_box) > 0.50:
-                    is_dup = True
-                    break
-            if not is_dup:
-                stationary_registry.append(finished)
-                completed_tracks.append(finished)
-        else:
+        if finished.is_passing(min_displacement=80.0, min_hits=2):
             completed_tracks.append(finished)
 
     # Sort tracks chronologically by initial frame
     completed_tracks.sort(key=lambda t: t.initial_frame)
     print(f"\nFinalizing {len(completed_tracks)} unique vehicle tracks for {video_path.name}...")
+
+    # Edge Optimization: Run OCR inference exactly once per passing vehicle on its optimal (peak sharpness) crop
+    for trk in tqdm(completed_tracks, desc="OCR on Peak Sharpness Plates", unit="plate"):
+        if trk.has_plate and trk.best_plate_crop is not None and trk.best_plate_crop.size > 0:
+            crop_rgb = cv2.cvtColor(trk.best_plate_crop, cv2.COLOR_BGR2RGB)
+            trk.best_ocr_res = ocr_reader.predict(Image.fromarray(crop_rgb))
+            trk.best_reading_score = compute_reading_score(trk.best_plate_crop, trk.best_ocr_res, trk.best_plate_box)
 
     # Save cropped images and format structured records
     vehicle_records: List[Dict[str, Any]] = []
@@ -445,13 +473,14 @@ def process_single_video(
         if full_plate:
             vehicles_with_plates += 1
 
-        clean_plate = f"{d3}_{d4}_{prov}".strip("_")
-        clean_plate = "".join(c if c.isalnum() or c in ["_", "-"] else "_" for c in clean_plate)
-        if not clean_plate:
-            clean_plate = "no_plate"
+        clean_plate = convert_to_dlt_international_plate(d3, d4, prov)
 
-        # 1. Save Cropped Car (Exactly Once)
-        car_filename = f"{video_stem}_car_trk{trk.track_id:04d}_{trk.veh_class.lower()}_{clean_plate}.jpg"
+
+
+
+        sharp_val = int(trk.best_plate_sharpness) if trk.has_plate else int(trk.best_car_sharpness)
+        # 1. Save Cropped Car (at peak sharpness)
+        car_filename = f"{video_stem}_car_trk{trk.track_id:04d}_{trk.veh_class.lower()}_{clean_plate}_sharp{sharp_val}.jpg"
         car_path = cars_out_dir / car_filename
         if trk.best_car_crop is not None and trk.best_car_crop.size > 0:
             imwrite_safe(car_path, trk.best_car_crop)
@@ -459,10 +488,10 @@ def process_single_video(
         else:
             rel_car_path = None
 
-        # 2. Save Cropped Plate (If present)
+        # 2. Save Cropped Plate (at peak sharpness, zero-padded)
         rel_plate_path = None
         if trk.has_plate and trk.best_plate_crop is not None and trk.best_plate_crop.size > 0:
-            plate_filename = f"{video_stem}_plate_trk{trk.track_id:04d}_{clean_plate}.jpg"
+            plate_filename = f"{video_stem}_plate_trk{trk.track_id:04d}_{clean_plate}_sharp{sharp_val}.jpg"
             plate_path = plates_out_dir / plate_filename
             imwrite_safe(plate_path, trk.best_plate_crop)
             rel_plate_path = str(plate_path.relative_to(output_base_dir)).replace("\\", "/")
@@ -479,11 +508,14 @@ def process_single_video(
             "best_timestamp_sec": round(float(trk.best_veh_sec), 2),
             "best_timestamp_iso": format_iso_duration(trk.best_veh_sec),
             "is_stationary": bool(trk.is_stationary()),
+            "displacement_px": round(float(trk.total_displacement()), 1),
             "has_plate": bool(trk.has_plate),
             "plate_text": str(full_plate) if trk.has_plate and full_plate else None,
             "d3": str(d3) if trk.has_plate and d3 else None,
             "d4": str(d4) if trk.has_plate and d4 else None,
             "province": str(prov) if trk.has_plate and prov else None,
+            "plate_sharpness": round(float(trk.best_plate_sharpness), 2) if trk.has_plate else 0.0,
+            "car_sharpness": round(float(trk.best_car_sharpness), 2),
             "plate_confidence": round(float(trk.best_plate_conf), 4) if trk.has_plate else 0.0,
             "ocr_confidence": round(float(trk.best_ocr_res.get("confidence", 0.0)), 4) if trk.has_plate else 0.0,
             "reading_score": round(float(trk.best_reading_score), 4) if trk.has_plate else 0.0,
@@ -546,6 +578,12 @@ def main():
         description="Run full length of videos, collect cropped car and license plate (each car once), create logs & summary."
     )
     parser.add_argument(
+        "--video-file",
+        type=str,
+        default=None,
+        help="Path to a specific video file to process"
+    )
+    parser.add_argument(
         "--input-dir",
         type=str,
         default=r"D:\Projects-anti\lpr\dataset\raw\27-Oct-2026",
@@ -581,10 +619,17 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    video_files = sorted(list(input_dir.glob(args.video_pattern)))
-    if not video_files:
-        print(f"[ERROR] No video files found matching '{args.video_pattern}' in {input_dir}")
-        sys.exit(1)
+    if args.video_file:
+        vf_p = Path(args.video_file)
+        if not vf_p.exists():
+            print(f"[ERROR] Specified video file not found: {vf_p}")
+            sys.exit(1)
+        video_files = [vf_p]
+    else:
+        video_files = sorted(list(input_dir.glob(args.video_pattern)))
+        if not video_files:
+            print(f"[ERROR] No video files found matching '{args.video_pattern}' in {input_dir}")
+            sys.exit(1)
 
     print("\n" + "="*80)
     print("  THAI LPR FULL-LENGTH VIDEO VEHICLE & LICENSE PLATE COLLECTOR")
@@ -613,9 +658,7 @@ def main():
     print(f"  Plate Detector   : {plate_model_path.name}")
     plate_model = YOLO(str(plate_model_path)).to(device)
 
-    ocr_model_path = ROOT_DIR / "models" / "reader" / "thai_plate_reader" / "best_norm_ED.pth"
-    if not ocr_model_path.exists():
-        ocr_model_path = ROOT_DIR / "best_norm_ED.pth"
+    ocr_model_path = resolve_model_path(None, READER_CANDIDATES)
     print(f"  Thai OCR Reader  : {ocr_model_path.name}")
     ocr_reader = PlateReader.get_instance(str(ocr_model_path))
 

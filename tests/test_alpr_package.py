@@ -16,6 +16,9 @@ from tools.alpr import (
     RealtimeLPRDemo,
     TrackedPlate,
     ThreadedStreamCapture,
+    MotionDetector,
+    compute_crop_sharpness,
+    detect_moving_vehicles,
     render_thai_badge,
     overlay_badge,
     get_thai_font,
@@ -67,6 +70,31 @@ class TestALPRPackage(unittest.TestCase):
         bgr, alpha = render_thai_badge("1กข 1234 กรุงเทพมหานคร")
         self.assertEqual(len(bgr.shape), 3)
         self.assertEqual(len(alpha.shape), 2)
+
+    def test_motion_detector_and_sharpness(self):
+        md = MotionDetector(history=10, min_motion_area=100)
+        # Static frames
+        f1 = np.zeros((360, 640, 3), dtype=np.uint8)
+        for _ in range(5):
+            md.update(f1)
+        # Moving object frame
+        f2 = f1.copy()
+        f2[100:200, 200:350] = 255
+        has_motion, boxes, _ = md.update(f2)
+        self.assertTrue(has_motion, "Should detect motion on changed region")
+        self.assertGreaterEqual(len(boxes), 1)
+
+        # Spatial motion overlap check
+        moving_box = [200.0, 100.0, 350.0, 200.0]
+        stationary_box = [10.0, 10.0, 50.0, 50.0]
+        self.assertTrue(md.is_moving(moving_box, boxes))
+        self.assertFalse(md.is_moving(stationary_box, boxes))
+
+        # Sharpness score
+        sharpness_zero = compute_crop_sharpness(f1)
+        self.assertAlmostEqual(sharpness_zero, 0.0)
+        sharp_crop = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        self.assertGreater(compute_crop_sharpness(sharp_crop), 10.0)
 
 
 if __name__ == "__main__":

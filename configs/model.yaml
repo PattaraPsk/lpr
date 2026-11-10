@@ -1,0 +1,24 @@
+# Model Architecture Configuration
+model:
+  name: "crnn_edge_recognizer"
+  architecture: "CRNN"
+
+backbone:
+  type: "custom_resnet"   # Lightweight ResNet / CNN backbone for edge CV inference
+  in_channels: 3
+  stem_channels: 64
+  feature_dim: 256
+  pretrained: false
+
+sequence_model:
+  type: "BiGRU"           # Bidirectional GRU / LSTM
+  hidden_size: 128
+  num_layers: 2
+  bidirectional: true
+  dropout: 0.1
+
+head:
+  type: "ctc"
+  # 1 blank + 10 digits + 41 Thai consonants = 52 tokens
+  num_classes: 52
+  blank_index: 0

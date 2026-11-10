@@ -37,6 +37,9 @@ from tools.alpr.config import (
 from tools.alpr.stream import ThreadedStreamCapture
 from tools.alpr.tracker import TrackedPlate, box_iou, box_center_dist
 from tools.alpr.detector import (
+    MotionDetector,
+    compute_crop_sharpness,
+    detect_moving_vehicles,
     detect_vehicles,
     detect_plates_coarse_to_fine,
     detect_plates_direct,
@@ -44,6 +47,7 @@ from tools.alpr.detector import (
 )
 from tools.alpr.hud import draw_hud, render_thai_badge, overlay_badge
 from tools.DataManipulator.app.plate_reader import PlateReader
+from tools.DataManipulator.app.provinces import convert_to_dlt_international_plate
 from tools.rtsp_collector.security import load_env_file, mask_rtsp_url
 
 
@@ -73,7 +77,8 @@ class RealtimeLPRDemo:
         roi_box: Optional[List[int]] = None,
         show_vehicles: bool = True,
         veh_conf_thresh: float = DEFAULT_VEH_CONF_THRESH,
-        coarse_to_fine: bool = True
+        coarse_to_fine: bool = True,
+        motion_filter: bool = True
     ):
         self.source_raw = source
         self.conf_thresh = conf_thresh
@@ -88,6 +93,8 @@ class RealtimeLPRDemo:
         self.auto_advance = auto_advance
         self.show_vehicles = show_vehicles
         self.coarse_to_fine = coarse_to_fine
+        self.motion_filter = motion_filter
+        self.motion_detector = MotionDetector()
 
         # Region of Interest (ROI) State
         self.roi_box: Optional[List[int]] = roi_box
@@ -196,7 +203,11 @@ class RealtimeLPRDemo:
 
         all_samples = []
         search_dirs = [
-            ROOT_DIR / "dataset" / "raw" / "19-Oct-2026",
+            ROOT_DIR / "dataset" / "detection" / "raw_video",
+            ROOT_DIR / "dataset" / "detection",
+            ROOT_DIR / "dataset" / "detection" / "raw_video",
+        ROOT_DIR / "dataset" / "detection",
+        ROOT_DIR / "dataset" / "raw" / "19-Oct-2026",
             ROOT_DIR / "dataset" / "raw" / "Raw Video Record",
             ROOT_DIR / "dataset" / "19-Oct-2026",
             ROOT_DIR / "dataset" / "Raw Video Record"
@@ -381,6 +392,9 @@ class RealtimeLPRDemo:
                 matched_track_ids.add(best_track.track_id)
                 det["track_id"] = best_track.track_id
                 det["consensus_plate"] = best_track.consensus_plate
+                det["consensus_d3"] = best_track.consensus_d3
+                det["consensus_d4"] = best_track.consensus_d4
+                det["consensus_province"] = best_track.consensus_province
                 det["iso_province"] = best_track.iso_province
             else:
                 new_trk = TrackedPlate(
@@ -400,6 +414,9 @@ class RealtimeLPRDemo:
 
                 det["track_id"] = new_trk.track_id
                 det["consensus_plate"] = new_trk.consensus_plate
+                det["consensus_d3"] = new_trk.consensus_d3
+                det["consensus_d4"] = new_trk.consensus_d4
+                det["consensus_province"] = new_trk.consensus_province
                 det["iso_province"] = new_trk.iso_province
 
                 if new_trk.consensus_plate:
@@ -470,8 +487,11 @@ class RealtimeLPRDemo:
         for det in tracked_dets:
             crop = det.get("crop")
             if crop is not None and crop.size > 0:
-                plate_txt = det.get("consensus_plate") or "unknown"
-                clean_plate = "".join([c if c.isalnum() else "_" for c in plate_txt])
+                d3 = det.get("consensus_d3") or ""
+                d4 = det.get("consensus_d4") or ""
+                prov = det.get("consensus_province") or ""
+                clean_plate = convert_to_dlt_international_plate(d3, d4, prov)
+
                 plate_path = self.snapshots_dir / "plates" / f"snapshot_{ts_str}_trk{det.get('track_id', 0)}_{clean_plate}.jpg"
                 cv2.imwrite(str(plate_path), crop)
                 print(f"  -> Saved plate crop: {plate_path.name}")
@@ -496,7 +516,7 @@ class RealtimeLPRDemo:
                     ret, frame, frame_idx = self.stream.read()
                     if not ret or frame is None:
                         time.sleep(0.01)
-                        key = cv2.waitKey(1) & 0xFF
+                        key = cv2.waitKey(1) & 0xFF if not self.headless else 0xFF
                         if key == ord('q') or key == 27:
                             break
                         elif key in (ord('n'), ord('N')):
@@ -509,7 +529,7 @@ class RealtimeLPRDemo:
                             self.toast_expire = time.time() + 2.5
                         continue
                 else:
-                    key = cv2.waitKey(30) & 0xFF
+                    key = cv2.waitKey(30) & 0xFF if not self.headless else 0xFF
                     if key == ord(' '):
                         self.is_paused = False
                         print("[INFO] Resumed stream.")
@@ -567,7 +587,11 @@ class RealtimeLPRDemo:
                 # Coarse Stage: Vehicle Detection
                 vehicles: List[Tuple[List[float], str, float]] = []
                 if self.veh_detector is not None:
-                    vehicles = detect_vehicles(
+                    if self.motion_filter:
+                        _, motion_boxes, _ = self.motion_detector.update(frame)
+                        vehicles = detect_moving_vehicles(self.veh_detector, det_frame, motion_boxes, offset_x, offset_y, self.veh_conf_thresh, self.device, self.motion_detector)
+                    else:
+                        vehicles = detect_vehicles(
                         veh_detector=self.veh_detector,
                         det_frame=det_frame,
                         offset_x=offset_x,
@@ -613,12 +637,13 @@ class RealtimeLPRDemo:
                     if pw < 14 or ph < 8 or (pw / orig_w) > 0.45:
                         continue
 
-                    pad_x = int(pw * 0.08)
-                    pad_y = int(ph * 0.08)
-                    cx1 = max(0, int(px1) - pad_x)
-                    cy1 = max(0, int(py1) - pad_y)
-                    cx2 = min(orig_w, int(px2) + pad_x)
-                    cy2 = min(orig_h, int(py2) + pad_y)
+                    # Zero-padding license plate crop as per Thai LPR Edge specification
+
+
+                    cx1 = max(0, int(px1))
+                    cy1 = max(0, int(py1))
+                    cx2 = min(orig_w, int(px2))
+                    cy2 = min(orig_h, int(py2))
 
                     crop_bgr = frame[cy1:cy2, cx1:cx2]
                     if crop_bgr.size == 0:
@@ -760,6 +785,8 @@ class RealtimeLPRDemo:
 def find_default_sample_video() -> Optional[Path]:
     """Finds a valid sample video from dataset folders if no source is given."""
     search_dirs = [
+        ROOT_DIR / "dataset" / "detection" / "raw_video",
+        ROOT_DIR / "dataset" / "detection",
         ROOT_DIR / "dataset" / "raw" / "19-Oct-2026",
         ROOT_DIR / "dataset" / "raw" / "Raw Video Record",
         ROOT_DIR / "dataset" / "19-Oct-2026",

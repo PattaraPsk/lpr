@@ -1,0 +1,74 @@
+{
+  "202610261140": {
+    "total_samples": 1183,
+    "exact_match_pct": 4.06,
+    "registration_pct": 6.76,
+    "d3_pct": 9.21,
+    "d4_pct": 50.89,
+    "province_pct": 46.24,
+    "type_pct": 24.6,
+    "avg_latency_ms": 9.46,
+    "fps": 105.7,
+    "description": "Real Anchor Verified CCTV Plates (1,183 images)"
+  },
+  "202611030335": {
+    "total_samples": 2000,
+    "exact_match_pct": 0.8,
+    "registration_pct": 1.55,
+    "d3_pct": 1.85,
+    "d4_pct": 9.65,
+    "province_pct": 8.25,
+    "type_pct": 8.45,
+    "avg_latency_ms": 9.31,
+    "fps": 107.4,
+    "description": "Expanded Real Verified CCTV/Mobile (2,000 sampled)"
+  },
+  "dataset-cctv-synthetic": {
+    "total_samples": 1500,
+    "exact_match_pct": 0.4,
+    "registration_pct": 0.6,
+    "d3_pct": 0.73,
+    "d4_pct": 5.27,
+    "province_pct": 5.53,
+    "type_pct": 11.6,
+    "avg_latency_ms": 8.67,
+    "fps": 115.4,
+    "description": "CCTV Profile Synthetic Benchmark (1,500 images)"
+  },
+  "dataset-mobile-synthetic": {
+    "total_samples": 1500,
+    "exact_match_pct": 3.53,
+    "registration_pct": 6.73,
+    "d3_pct": 7.8,
+    "d4_pct": 19.53,
+    "province_pct": 11.6,
+    "type_pct": 27.73,
+    "avg_latency_ms": 8.31,
+    "fps": 120.3,
+    "description": "Mobile Camera Synthetic Benchmark (1,500 images)"
+  },
+  "dataset-dirty10-blur5-angle5": {
+    "total_samples": 2000,
+    "exact_match_pct": 58.9,
+    "registration_pct": 62.55,
+    "d3_pct": 66.45,
+    "d4_pct": 75.85,
+    "province_pct": 74.55,
+    "type_pct": 96.4,
+    "avg_latency_ms": 8.75,
+    "fps": 114.3,
+    "description": "Degraded Environmental Benchmark (2,000 sampled)"
+  },
+  "dataset-v3.0-synthetic-clean": {
+    "total_samples": 2000,
+    "exact_match_pct": 95.85,
+    "registration_pct": 95.9,
+    "d3_pct": 98.45,
+    "d4_pct": 97.4,
+    "province_pct": 99.95,
+    "type_pct": 100.0,
+    "avg_latency_ms": 2.0,
+    "fps": 500.3,
+    "description": "Clean Synthetic Target Benchmark (2,000 stratified)"
+  }
+}

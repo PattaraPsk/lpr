@@ -1,0 +1,2 @@
+# Test Split (format: image_path [label])
+# Generated automatically by src.data.prepare

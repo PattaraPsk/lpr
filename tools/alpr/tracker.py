@@ -11,9 +11,21 @@ import collections
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import cv2
 import numpy as np
 
 from tools.DataManipulator.app.provinces import get_iso_code
+
+
+def compute_sharpness(crop_bgr: np.ndarray) -> float:
+    """Computes Laplacian variance sharpness score on an image crop."""
+    if crop_bgr is None or crop_bgr.size == 0:
+        return 0.0
+    try:
+        gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    except Exception:
+        return 0.0
 
 
 def box_iou(b1: List[float], b2: List[float]) -> float:
@@ -71,6 +83,12 @@ class TrackedPlate:
         self.best_conf = ocr_result.get("confidence", 0.0)
         self.best_ocr = ocr_result
 
+        # Optical sharpness history
+        self.best_sharpness = compute_sharpness(crop_bgr)
+        self.best_sharp_frame = frame_idx
+        self.best_sharp_crop = crop_bgr.copy()
+        self.best_sharp_car: Optional[np.ndarray] = None
+
         # Consensus reading
         self.consensus_plate = ocr_result.get("full_plate", "")
         self.consensus_d3 = ocr_result.get("d3", "")
@@ -89,7 +107,8 @@ class TrackedPlate:
         crop_bgr: np.ndarray,
         ocr_result: Dict[str, Any],
         vehicle_type: str = "Unknown",
-        orientation: str = "Unknown"
+        orientation: str = "Unknown",
+        car_crop: Optional[np.ndarray] = None
     ):
         self.current_box = box
         self.last_frame = frame_idx
@@ -101,6 +120,14 @@ class TrackedPlate:
             self.vehicle_type = vehicle_type
         if orientation != "Unknown":
             self.orientation = orientation
+
+        cur_sharpness = compute_sharpness(crop_bgr)
+        if cur_sharpness > self.best_sharpness or self.best_sharp_crop is None:
+            self.best_sharpness = cur_sharpness
+            self.best_sharp_frame = frame_idx
+            self.best_sharp_crop = crop_bgr.copy()
+            if car_crop is not None:
+                self.best_sharp_car = car_crop.copy()
 
         ocr_conf = ocr_result.get("confidence", 0.0)
         if ocr_result.get("full_plate"):

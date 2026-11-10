@@ -13,7 +13,8 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QFileDialog, QMessageBox,
     QProgressBar, QFrame, QGroupBox, QGridLayout, QComboBox,
     QInputDialog, QCheckBox, QScrollArea, QProgressDialog,
-    QTableWidget, QTableWidgetItem, QHeaderView, QDoubleSpinBox
+    QTableWidget, QTableWidgetItem, QHeaderView, QDoubleSpinBox,
+    QTabWidget
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont, QKeySequence, QIcon, QShortcut, QColor
@@ -26,6 +27,8 @@ from .check_view import CheckViewDialog
 from .provinces import normalize_thai_script
 from .reader_worker import AISingleReaderWorker, AIBatchReaderWorker
 from .training_dialog import TrainingDialog
+from .plate_reader import PlateReader
+from .detector_helper import DetectorHelper
 
 
 class MainWindow(QMainWindow):
@@ -247,8 +250,8 @@ class MainWindow(QMainWindow):
         panel.setMaximumWidth(520)
         
         p_layout = QVBoxLayout(panel)
-        p_layout.setContentsMargins(16, 16, 16, 16)
-        p_layout.setSpacing(12)
+        p_layout.setContentsMargins(14, 14, 14, 14)
+        p_layout.setSpacing(10)
         
         # Subfolder & Filename header
         self.lbl_current_subfolder = QLabel("Folder: (None)")
@@ -264,80 +267,7 @@ class MainWindow(QMainWindow):
         self.lbl_current_status.setObjectName("lblStatus")
         p_layout.addWidget(self.lbl_current_status)
         
-        # ---------------------------------------------------------------------
-        # AI Reader (AI Reader) & Comparison Box
-        # ---------------------------------------------------------------------
-        self.gb_ai = self._create_ai_comparison_box()
-        p_layout.addWidget(self.gb_ai)
-
-        # ---------------------------------------------------------------------
-        # YOLO Bounding Box Inspector (Object Detection Mode)
-        # ---------------------------------------------------------------------
-        self.gb_yolo_inspector = self._create_yolo_inspector_box()
-        p_layout.addWidget(self.gb_yolo_inspector)
-        
-        # ---------------------------------------------------------------------
-        # Plate Structure Editor
-        # ---------------------------------------------------------------------
-        gb_edit = QGroupBox("Plate Information")
-        gb_edit.setObjectName("groupBoxEdit")
-        grid = QGridLayout(gb_edit)
-        grid.setVerticalSpacing(10)
-        grid.setHorizontalSpacing(8)
-        grid.setContentsMargins(12, 16, 12, 12)
-        
-        # 1. Base Name field (Editable)
-        lbl_name = QLabel("Base Name:")
-        lbl_name.setStyleSheet("font-weight: 500;")
-        self.txt_name = QLineEdit()
-        self.txt_name.setPlaceholderText("Prefix / Identifier")
-        self.txt_name.returnPressed.connect(self._on_approve_clicked)
-        grid.addWidget(lbl_name, 0, 0)
-        grid.addWidget(self.txt_name, 0, 1)
-        
-        # 2. Plate Type field
-        lbl_type = QLabel("Plate Type:")
-        lbl_type.setStyleSheet("font-weight: bold; color: #a78bfa;")
-        self.combo_plate_type = PlateTypeComboBox()
-        self.combo_plate_type.setObjectName("comboPlateType")
-        grid.addWidget(lbl_type, 1, 0)
-        grid.addWidget(self.combo_plate_type, 1, 1)
-        
-        # 3. d3 field (characters)
-        lbl_d3 = QLabel("d3 (Letters/Type):")
-        lbl_d3.setStyleSheet("font-weight: bold; color: #60a5fa;")
-        self.txt_d3 = QLineEdit()
-        self.txt_d3.setPlaceholderText("e.g. 1กข, ขก, +")
-        self.txt_d3.setObjectName("txtPlateField")
-        self.txt_d3.textChanged.connect(self._on_manual_field_changed)
-        self.txt_d3.returnPressed.connect(self._on_approve_clicked)
-        grid.addWidget(lbl_d3, 2, 0)
-        grid.addWidget(self.txt_d3, 2, 1)
-        
-        # 4. d4 field (numbers)
-        lbl_d4 = QLabel("d4 (Number):")
-        lbl_d4.setStyleSheet("font-weight: bold; color: #60a5fa;")
-        self.txt_d4 = QLineEdit()
-        self.txt_d4.setPlaceholderText("e.g. 1234, 9999, +")
-        self.txt_d4.setObjectName("txtPlateField")
-        self.txt_d4.textChanged.connect(self._on_manual_field_changed)
-        self.txt_d4.returnPressed.connect(self._on_approve_clicked)
-        grid.addWidget(lbl_d4, 3, 0)
-        grid.addWidget(self.txt_d4, 3, 1)
-        
-        # 5. province field
-        lbl_province = QLabel("Province:")
-        lbl_province.setStyleSheet("font-weight: bold; color: #60a5fa;")
-        self.combo_province = SearchableProvinceComboBox()
-        self.combo_province.setObjectName("comboProvince")
-        self.combo_province.currentTextChanged.connect(self._on_manual_field_changed)
-        grid.addWidget(lbl_province, 4, 0)
-        grid.addWidget(self.combo_province, 4, 1)
-        
-        self.gb_plate_info = gb_edit
-        p_layout.addWidget(self.gb_plate_info)
-        
-        # File Manage Row (Rename & Delete)
+        # Common File Manage Row (Rename & Delete)
         file_actions_box = QHBoxLayout()
         file_actions_box.setSpacing(8)
         
@@ -352,13 +282,95 @@ class MainWindow(QMainWindow):
         file_actions_box.addWidget(self.btn_delete_file)
         
         p_layout.addLayout(file_actions_box)
-        
-        # Action Buttons Group
-        lbl_actions = QLabel("Quick Actions:")
-        lbl_actions.setStyleSheet("font-weight: bold; color: #a0a0b0; margin-top: 4px;")
-        p_layout.addWidget(lbl_actions)
 
-        # Dataset Staging Checkbox & Folder Link
+        # Tab Widget separating Reading Labeling vs Detection Labeling
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setObjectName("mainTabWidget")
+        
+        # -------------------------------------------------------------
+        # TAB 1: 🔤 Plate Reading (OCR) Labeling
+        # -------------------------------------------------------------
+        tab_reading = QWidget()
+        tab_reading_layout = QVBoxLayout(tab_reading)
+        tab_reading_layout.setContentsMargins(4, 8, 4, 4)
+        tab_reading_layout.setSpacing(10)
+        
+        # Helper OCR Model Switcher Card
+        ocr_model_frame = QFrame()
+        ocr_model_frame.setStyleSheet("background-color: #171722; border: 1px solid #334155; border-radius: 6px; padding: 6px;")
+        ocr_model_layout = QVBoxLayout(ocr_model_frame)
+        ocr_model_layout.setContentsMargins(6, 6, 6, 6)
+        ocr_model_layout.setSpacing(4)
+        
+        lbl_ocr_m = QLabel("Helper OCR Model:")
+        lbl_ocr_m.setStyleSheet("font-weight: bold; color: #a78bfa; font-size: 11px;")
+        ocr_model_layout.addWidget(lbl_ocr_m)
+        
+        self.combo_ocr_model = QComboBox()
+        self.combo_ocr_model.setObjectName("comboOcrModel")
+        self.combo_ocr_model.setToolTip("Switch active OCR inference checkpoint in models/reader/")
+        ocr_model_layout.addWidget(self.combo_ocr_model)
+        tab_reading_layout.addWidget(ocr_model_frame)
+        
+        # AI Reader & Live Comparison Box
+        self.gb_ai = self._create_ai_comparison_box()
+        tab_reading_layout.addWidget(self.gb_ai)
+        
+        # Plate Information Form
+        gb_edit = QGroupBox("Plate Information")
+        gb_edit.setObjectName("groupBoxEdit")
+        grid = QGridLayout(gb_edit)
+        grid.setVerticalSpacing(8)
+        grid.setHorizontalSpacing(8)
+        grid.setContentsMargins(10, 14, 10, 10)
+        
+        lbl_name = QLabel("Base Name:")
+        lbl_name.setStyleSheet("font-weight: 500;")
+        self.txt_name = QLineEdit()
+        self.txt_name.setPlaceholderText("Prefix / Identifier")
+        self.txt_name.returnPressed.connect(self._on_approve_clicked)
+        grid.addWidget(lbl_name, 0, 0)
+        grid.addWidget(self.txt_name, 0, 1)
+        
+        lbl_type = QLabel("Plate Type:")
+        lbl_type.setStyleSheet("font-weight: bold; color: #a78bfa;")
+        self.combo_plate_type = PlateTypeComboBox()
+        self.combo_plate_type.setObjectName("comboPlateType")
+        grid.addWidget(lbl_type, 1, 0)
+        grid.addWidget(self.combo_plate_type, 1, 1)
+        
+        lbl_d3 = QLabel("d3 (Letters):")
+        lbl_d3.setStyleSheet("font-weight: bold; color: #60a5fa;")
+        self.txt_d3 = QLineEdit()
+        self.txt_d3.setPlaceholderText("e.g. 1กข, ขก, +")
+        self.txt_d3.setObjectName("txtPlateField")
+        self.txt_d3.textChanged.connect(self._on_manual_field_changed)
+        self.txt_d3.returnPressed.connect(self._on_approve_clicked)
+        grid.addWidget(lbl_d3, 2, 0)
+        grid.addWidget(self.txt_d3, 2, 1)
+        
+        lbl_d4 = QLabel("d4 (Number):")
+        lbl_d4.setStyleSheet("font-weight: bold; color: #60a5fa;")
+        self.txt_d4 = QLineEdit()
+        self.txt_d4.setPlaceholderText("e.g. 1234, 9999, +")
+        self.txt_d4.setObjectName("txtPlateField")
+        self.txt_d4.textChanged.connect(self._on_manual_field_changed)
+        self.txt_d4.returnPressed.connect(self._on_approve_clicked)
+        grid.addWidget(lbl_d4, 3, 0)
+        grid.addWidget(self.txt_d4, 3, 1)
+        
+        lbl_province = QLabel("Province:")
+        lbl_province.setStyleSheet("font-weight: bold; color: #60a5fa;")
+        self.combo_province = SearchableProvinceComboBox()
+        self.combo_province.setObjectName("comboProvince")
+        self.combo_province.currentTextChanged.connect(self._on_manual_field_changed)
+        grid.addWidget(lbl_province, 4, 0)
+        grid.addWidget(self.combo_province, 4, 1)
+        
+        self.gb_plate_info = gb_edit
+        tab_reading_layout.addWidget(self.gb_plate_info)
+        
+        # Dataset Staging Checkbox & Link
         staging_row = QHBoxLayout()
         self.chk_auto_staging = QCheckBox("Auto-stage Approved")
         self.chk_auto_staging.setChecked(True)
@@ -372,35 +384,95 @@ class MainWindow(QMainWindow):
         btn_open_staging.setToolTip("Open dataset staging directory in Windows Explorer")
         btn_open_staging.clicked.connect(self._on_open_staging_folder)
         staging_row.addWidget(btn_open_staging)
-        p_layout.addLayout(staging_row)
+        tab_reading_layout.addLayout(staging_row)
         
-        # Correct / Approve Button
+        # Reading Action Buttons
         self.btn_approve = QPushButton("✅ Correct / Approve (Enter)")
         self.btn_approve.setObjectName("btnApprove")
         self.btn_approve.clicked.connect(self._on_approve_clicked)
-        p_layout.addWidget(self.btn_approve)
+        tab_reading_layout.addWidget(self.btn_approve)
         
-        # Not Plate Button
+        row_quick_special = QHBoxLayout()
+        row_quick_special.setSpacing(6)
+        
         self.btn_not_plate = QPushButton("🚫 Not Plate [+] (Ctrl+N)")
         self.btn_not_plate.setObjectName("btnNotPlate")
         self.btn_not_plate.setToolTip("Fill all boxes with '+' for Not Plate. Save by clicking Approve.")
         self.btn_not_plate.clicked.connect(self._on_not_plate_clicked)
-        p_layout.addWidget(self.btn_not_plate)
+        row_quick_special.addWidget(self.btn_not_plate, 1)
         
-        # Cannot Read Button
         self.btn_cannot_read = QPushButton("❓ Cannot Read [-] (Ctrl+D)")
         self.btn_cannot_read.setObjectName("btnCannotRead")
         self.btn_cannot_read.setToolTip("Fill all boxes with '-' for Cannot Read. Save by clicking Approve.")
         self.btn_cannot_read.clicked.connect(self._on_cannot_read_clicked)
-        p_layout.addWidget(self.btn_cannot_read)
+        row_quick_special.addWidget(self.btn_cannot_read, 1)
+        tab_reading_layout.addLayout(row_quick_special)
         
-        # Skip Button
         self.btn_skip = QPushButton("⏭️ Skip (Ctrl+S)")
         self.btn_skip.setObjectName("btnSkip")
         self.btn_skip.clicked.connect(self._on_skip_clicked)
-        p_layout.addWidget(self.btn_skip)
+        tab_reading_layout.addWidget(self.btn_skip)
         
-        p_layout.addStretch()
+        tab_reading_layout.addStretch()
+        
+        # -------------------------------------------------------------
+        # TAB 2: 🎯 Object Detection (YOLO) Labeling
+        # -------------------------------------------------------------
+        tab_detection = QWidget()
+        tab_detection_layout = QVBoxLayout(tab_detection)
+        tab_detection_layout.setContentsMargins(4, 8, 4, 4)
+        tab_detection_layout.setSpacing(10)
+        
+        # Helper Detector Model Switcher Card
+        det_model_frame = QFrame()
+        det_model_frame.setStyleSheet("background-color: #171722; border: 1px solid #334155; border-radius: 6px; padding: 6px;")
+        det_model_layout = QVBoxLayout(det_model_frame)
+        det_model_layout.setContentsMargins(6, 6, 6, 6)
+        det_model_layout.setSpacing(6)
+        
+        lbl_det_m = QLabel("Helper Detector Model:")
+        lbl_det_m.setStyleSheet("font-weight: bold; color: #38bdf8; font-size: 11px;")
+        det_model_layout.addWidget(lbl_det_m)
+        
+        self.combo_det_model = QComboBox()
+        self.combo_det_model.setObjectName("comboDetModel")
+        self.combo_det_model.setToolTip("Switch active YOLO detector checkpoint in models/detector/")
+        det_model_layout.addWidget(self.combo_det_model)
+        
+        self.btn_ai_detect = QPushButton("⚡ AI Auto-Detect Boxes")
+        self.btn_ai_detect.setObjectName("btnAiDetect")
+        self.btn_ai_detect.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px;")
+        self.btn_ai_detect.setToolTip("Run selected YOLO detector on the active image and auto-populate bounding boxes")
+        self.btn_ai_detect.clicked.connect(self._on_ai_detect_clicked)
+        det_model_layout.addWidget(self.btn_ai_detect)
+        
+        tab_detection_layout.addWidget(det_model_frame)
+        
+        # YOLO Bounding Box Inspector
+        self.gb_yolo_inspector = self._create_yolo_inspector_box()
+        tab_detection_layout.addWidget(self.gb_yolo_inspector)
+        
+        # Detection Actions
+        self.btn_det_save = QPushButton("💾 Save Bounding Boxes (Enter)")
+        self.btn_det_save.setObjectName("btnDetSave")
+        self.btn_det_save.setStyleSheet("background-color: #10b981; color: white; font-weight: bold; padding: 10px; border-radius: 6px; font-size: 13px;")
+        self.btn_det_save.setToolTip("Save bounding boxes to label file and advance to next image (Enter)")
+        self.btn_det_save.clicked.connect(self._on_approve_clicked)
+        tab_detection_layout.addWidget(self.btn_det_save)
+        
+        self.btn_det_skip = QPushButton("⏭️ Skip Image (Ctrl+S)")
+        self.btn_det_skip.setObjectName("btnDetSkip")
+        self.btn_det_skip.setStyleSheet("background-color: #d97706; color: white; font-weight: bold; padding: 7px; border-radius: 4px;")
+        self.btn_det_skip.clicked.connect(self._on_skip_clicked)
+        tab_detection_layout.addWidget(self.btn_det_skip)
+        
+        tab_detection_layout.addStretch()
+        
+        # Add Tabs to TabWidget
+        self.tab_widget.addTab(tab_reading, "🔤 Plate Reading")
+        self.tab_widget.addTab(tab_detection, "🎯 Object Detection")
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+        p_layout.addWidget(self.tab_widget, 1)
         
         # Navigation Bar
         nav_box = QHBoxLayout()
@@ -436,6 +508,9 @@ class MainWindow(QMainWindow):
         self.combo_image_jump.currentIndexChanged.connect(self._on_jump_image_selected)
         jump_box.addWidget(self.combo_image_jump, 1)
         p_layout.addLayout(jump_box)
+        
+        # Initialize helper models in combo dropdowns
+        self._init_helper_models()
         
         return panel
 
@@ -1111,17 +1186,159 @@ class MainWindow(QMainWindow):
         if target_idx is not None and target_idx >= 0 and target_idx != self.session.current_index:
             self._show_item_at(target_idx)
 
-    def _on_toggle_view_mode(self):
-        """Toggles between YOLO Object Detection Mode and Plate OCR Mode."""
-        self.session.dataset_type = "ocr" if self.session.dataset_type == "yolo" else "yolo"
-        self._apply_dataset_mode_ui()
+    def _init_helper_models(self):
+        """Initializes helper OCR and detector model selectors."""
+        # 1. OCR Models
+        ocr_models = PlateReader.get_available_models()
+        self.combo_ocr_model.blockSignals(True)
+        self.combo_ocr_model.clear()
+        current_reader_path = str(PlateReader.get_instance().weights_path.resolve()) if PlateReader.get_instance().weights_path else ""
+        selected_ocr_idx = 0
+        for idx, (label, path_str) in enumerate(ocr_models.items()):
+            self.combo_ocr_model.addItem(label, userData=path_str)
+            if current_reader_path and Path(path_str).resolve() == Path(current_reader_path).resolve():
+                selected_ocr_idx = idx
+        self.combo_ocr_model.setCurrentIndex(selected_ocr_idx)
+        self.combo_ocr_model.blockSignals(False)
+        self.combo_ocr_model.currentIndexChanged.connect(self._on_ocr_model_changed)
+        
+        # 2. YOLO Detector Models
+        det_models = DetectorHelper.get_available_models()
+        self.combo_det_model.blockSignals(True)
+        self.combo_det_model.clear()
+        det_inst = DetectorHelper.get_instance()
+        current_det_path = str(det_inst.model_path.resolve()) if det_inst.model_path else ""
+        selected_det_idx = 0
+        for idx, (label, path_str) in enumerate(det_models.items()):
+            self.combo_det_model.addItem(label, userData=path_str)
+            if current_det_path and Path(path_str).resolve() == Path(current_det_path).resolve():
+                selected_det_idx = idx
+        self.combo_det_model.setCurrentIndex(selected_det_idx)
+        self.combo_det_model.blockSignals(False)
+        self.combo_det_model.currentIndexChanged.connect(self._on_det_model_changed)
+
+    def _on_ocr_model_changed(self, index: int):
+        """Called when user selects a different OCR helper model."""
+        path_str = self.combo_ocr_model.currentData()
+        if not path_str:
+            return
+        reader = PlateReader.get_instance()
+        success = reader.switch_model(path_str)
+        m_name = Path(path_str).name
+        if success:
+            self.lbl_status_msg.setText(f"Switched Helper OCR Model to: {m_name}")
+            item = self.session.get_current_item()
+            if item:
+                item.ai_d3 = ""
+                item.ai_d4 = ""
+                item.ai_province = ""
+                self._run_single_ai_read(item)
+        else:
+            self.lbl_status_msg.setText(f"Failed to switch OCR model: {reader.error_msg}")
+
+    def _on_det_model_changed(self, index: int):
+        """Called when user selects a different YOLO detector helper model."""
+        path_str = self.combo_det_model.currentData()
+        if not path_str:
+            return
+        det_inst = DetectorHelper.get_instance()
+        success = det_inst.switch_model(path_str)
+        m_name = Path(path_str).name
+        if success:
+            self.lbl_status_msg.setText(f"Switched Helper YOLO Detector to: {m_name}")
+            if det_inst.class_names:
+                for cid, cname in det_inst.class_names.items():
+                    if cid not in self.session.class_names:
+                        self.session.class_names[cid] = cname
+                self._refresh_box_class_selector()
+                self._refresh_class_filter_combo()
+        else:
+            self.lbl_status_msg.setText(f"Failed to switch detector model: {det_inst.error_msg}")
+
+    def _on_ai_detect_clicked(self):
+        """Runs helper YOLO detector on active image and populates bounding boxes."""
+        item = self.session.get_current_item()
+        if not item:
+            QMessageBox.information(self, "No Image", "Please load an image folder first.")
+            return
+            
+        det_inst = DetectorHelper.get_instance()
+        if det_inst.model is None:
+            QMessageBox.warning(self, "Detector Not Ready", f"Detector helper is not loaded: {det_inst.error_msg}")
+            return
+            
+        boxes = det_inst.predict(str(item.path), conf=0.25)
+        if not boxes:
+            self.lbl_status_msg.setText("AI Detector ran: 0 boxes found on current image.")
+            QMessageBox.information(self, "Detection Result", "No objects detected with current detector threshold (conf=0.25).")
+            return
+            
+        if item.boxes:
+            reply = QMessageBox.question(
+                self,
+                "Replace or Append Boxes?",
+                f"AI Detector found {len(boxes)} box(es).\n\n"
+                f"Replace existing {len(item.boxes)} box(es) [Yes] or Append new boxes [No]?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                item.boxes = boxes
+            elif reply == QMessageBox.StandardButton.No:
+                item.boxes.extend(boxes)
+            else:
+                return
+        else:
+            item.boxes = boxes
+            
+        self.image_viewer.set_bounding_boxes(item.boxes)
+        self._refresh_yolo_table()
         self._update_ui_state()
-        if self.session.items:
-            self._show_item_at(self.session.current_index)
+        self.lbl_status_msg.setText(f"Auto-detected {len(boxes)} boxes. Click 'Save Bounding Boxes' to persist.")
+
+    def _refresh_box_class_selector(self):
+        """Updates combo_box_class with current session and detector class names."""
+        if not hasattr(self, 'combo_box_class'):
+            return
+        det_inst = DetectorHelper.get_instance()
+        names = det_inst.class_names or self.session.class_names
+        self.combo_box_class.blockSignals(True)
+        self.combo_box_class.clear()
+        for cid, cname in sorted(names.items()):
+            self.combo_box_class.addItem(f"{cid}: {cname}", userData=cid)
+        self.combo_box_class.blockSignals(False)
+
+    def _on_tab_changed(self, index: int):
+        """Called when user switches tabs between Reading (0) and Detection (1)."""
+        new_mode = "ocr" if index == 0 else "yolo"
+        if self.session.dataset_type != new_mode:
+            self.session.dataset_type = new_mode
+            self._apply_dataset_mode_ui()
+            self._update_ui_state()
+            if self.session.items:
+                self._show_item_at(self.session.current_index)
+
+    def _on_toggle_view_mode(self):
+        """Toggles between YOLO Object Detection Mode and Plate OCR Mode via tabs."""
+        if hasattr(self, 'tab_widget'):
+            current_idx = self.tab_widget.currentIndex()
+            self.tab_widget.setCurrentIndex(1 - current_idx)
+        else:
+            self.session.dataset_type = "ocr" if self.session.dataset_type == "yolo" else "yolo"
+            self._apply_dataset_mode_ui()
+            self._update_ui_state()
+            if self.session.items:
+                self._show_item_at(self.session.current_index)
 
     def _apply_dataset_mode_ui(self):
-        """Updates UI layout visibility based on YOLO vs OCR mode."""
+        """Updates UI layout visibility and tab selection based on YOLO vs OCR mode."""
         is_yolo = (self.session.dataset_type == "yolo")
+        target_tab = 1 if is_yolo else 0
+        if hasattr(self, 'tab_widget') and self.tab_widget.currentIndex() != target_tab:
+            self.tab_widget.blockSignals(True)
+            self.tab_widget.setCurrentIndex(target_tab)
+            self.tab_widget.blockSignals(False)
+
         self.badge_mode.setText("🎯 YOLO Detection" if is_yolo else "🔤 Plate OCR")
         self.badge_mode.setStyleSheet(
             "background-color: #0284c7; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;"
@@ -1132,19 +1349,8 @@ class MainWindow(QMainWindow):
         self.lbl_filter_class.setVisible(is_yolo)
         self.combo_status_filter.setVisible(not is_yolo)
         self.lbl_filter_status.setVisible(not is_yolo)
-        self.gb_yolo_inspector.setVisible(is_yolo)
-        
-        self.gb_plate_info.setVisible(not is_yolo)
-        self.gb_ai.setVisible(not is_yolo)
         self.btn_clean_dup.setVisible(not is_yolo)
         self.btn_batch_ai.setVisible(not is_yolo)
-        self.btn_not_plate.setVisible(not is_yolo)
-        self.btn_cannot_read.setVisible(not is_yolo)
-        
-        if is_yolo:
-            self.btn_approve.setText("💾 Save Bounding Boxes (Enter)")
-        else:
-            self.btn_approve.setText("✅ Correct / Approve (Enter)")
 
     def _on_train_models_clicked(self):
         """Opens the Model Training Studio dialog."""
@@ -2191,6 +2397,34 @@ class MainWindow(QMainWindow):
                 border-radius: 3px;
                 border: 1px solid #4b5563;
                 background-color: #1e293b;
+            }
+            QTabWidget::pane {
+                border: 1px solid #334155;
+                background-color: #171722;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QTabBar::tab {
+                background-color: #1e1e2d;
+                color: #94a3b8;
+                padding: 7px 14px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                font-weight: bold;
+                font-size: 12px;
+                margin-right: 2px;
+                border: 1px solid #334155;
+                border-bottom: none;
+            }
+            QTabBar::tab:selected {
+                background-color: #27273a;
+                color: #38bdf8;
+                border-color: #38bdf8;
+                border-bottom: 2px solid #38bdf8;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #242436;
+                color: #f1f5f9;
             }
             QCheckBox::indicator:checked {
                 background-color: #3b82f6;

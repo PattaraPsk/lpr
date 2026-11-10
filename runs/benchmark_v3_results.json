@@ -1,0 +1,43 @@
+{
+  "timestamp_utc": "2026-11-09T15:09:40.659288+00:00",
+  "total_test_samples": 2000,
+  "device": "cuda",
+  "models": {
+    "EasyOCR Baseline": {
+      "model_type": "easyocr",
+      "total_samples": 2000,
+      "exact_accuracy_pct": 19.75,
+      "plate_type_accuracy_pct": 85.6,
+      "d3_accuracy_pct": 19.75,
+      "d4_accuracy_pct": 19.75,
+      "province_accuracy_pct": 48.2,
+      "negative_rejection_pct": 98.75,
+      "avg_latency_ms": 335.46,
+      "fps": 3.0
+    },
+    "PaddleOCR Baseline": {
+      "model_type": "paddleocr",
+      "total_samples": 2000,
+      "exact_accuracy_pct": 79.05,
+      "plate_type_accuracy_pct": 100.0,
+      "d3_accuracy_pct": 99.6,
+      "d4_accuracy_pct": 79.45,
+      "province_accuracy_pct": 99.65,
+      "negative_rejection_pct": 100.0,
+      "avg_latency_ms": 64.26,
+      "fps": 15.6
+    },
+    "SelenOCR v0.1.0": {
+      "model_type": "selen_ocr",
+      "total_samples": 2000,
+      "exact_accuracy_pct": 96.15,
+      "plate_type_accuracy_pct": 100.0,
+      "d3_accuracy_pct": 98.7,
+      "d4_accuracy_pct": 97.5,
+      "province_accuracy_pct": 99.95,
+      "negative_rejection_pct": 100.0,
+      "avg_latency_ms": 161.17,
+      "fps": 6.2
+    }
+  }
+}

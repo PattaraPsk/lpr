@@ -16,6 +16,9 @@ from tools.alpr.config import (
 from tools.alpr.stream import ThreadedStreamCapture
 from tools.alpr.tracker import TrackedPlate, box_iou, box_center_dist
 from tools.alpr.detector import (
+    MotionDetector,
+    compute_crop_sharpness,
+    detect_moving_vehicles,
     detect_vehicles,
     detect_plates_coarse_to_fine,
     detect_plates_direct,
@@ -37,6 +40,9 @@ __all__ = [
     "RealtimeLPRDemo",
     "TrackedPlate",
     "ThreadedStreamCapture",
+    "MotionDetector",
+    "compute_crop_sharpness",
+    "detect_moving_vehicles",
     "render_thai_badge",
     "overlay_badge",
     "get_thai_font",

@@ -28,7 +28,9 @@ from tools.DataManipulator.app.provinces import (
     get_iso_code,
     get_province_by_iso,
     normalize_thai_script,
-    match_province_value
+    match_province_value,
+    convert_d3_to_dlt_intl,
+    convert_to_dlt_international_plate
 )
 from tools.detect_cam_videos import (
     calculate_sha256,
@@ -93,6 +95,33 @@ class TestISO3166AndUnicode(unittest.TestCase):
         self.assertEqual(match_province_value("Bangkok"), "กรุงเทพมหานคร")
         self.assertEqual(match_province_value("TH-10"), "กรุงเทพมหานคร")
         self.assertEqual(match_province_value("เชียงใหม่"), "เชียงใหม่")
+
+    def test_dlt_international_plate_conversion(self):
+        """Verifies DLT International plate conversion for ASCII-clean filenames (Option 1)."""
+        # Standard plates with combining vowels and tone marks
+        self.assertEqual(
+            convert_to_dlt_international_plate("1กข", "1234", "ชลบุรี"),
+            "1AB_1234_TH-20"
+        )
+        self.assertEqual(
+            convert_to_dlt_international_plate("จด", "769", "กรุงเทพมหานคร"),
+            "EL_769_TH-10"
+        )
+        self.assertEqual(
+            convert_to_dlt_international_plate("งน", "111", "สงขลา"),
+            "DQ_111_TH-90"
+        )
+        self.assertEqual(
+            convert_to_dlt_international_plate("3กษ", "4567", "สุราษฎร์ธานี"),
+            "3A4_4567_TH-84"
+        )
+        # Verify DLT paired special consonants
+        self.assertEqual(convert_d3_to_dlt_intl("ญญ"), "V1")
+        self.assertEqual(convert_d3_to_dlt_intl("ฒฒ"), "V2")
+        self.assertEqual(convert_d3_to_dlt_intl("ฆฆ"), "V3")
+        # Ensure result has zero non-ASCII characters
+        res = convert_to_dlt_international_plate("1กข", "1234", "ชลบุรี")
+        self.assertTrue(all(ord(c) < 128 for c in res))
 
 
 class TestISO8601AndISO25012(unittest.TestCase):

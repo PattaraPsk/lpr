@@ -27,6 +27,32 @@ class TestDatasetOrganization(unittest.TestCase):
                 f"Dataset tier '{tier}' must exist in {DATASET_DIR}"
             )
 
+    def test_two_stream_dataset_hierarchy_exists(self):
+        """
+        Verifies the two-stream dataset hierarchy:
+        1. Detection Dataset: raw_video, annotated, verified, versions.
+        2. Reading Dataset: cropped, labeled, verified, versions.
+        """
+        detection_dir = DATASET_DIR / "detection"
+        self.assertTrue(detection_dir.exists() and detection_dir.is_dir(), "dataset/detection must exist")
+        expected_detection_tiers = ["raw_video", "annotated", "verified", "versions"]
+        for tier in expected_detection_tiers:
+            tier_path = detection_dir / tier
+            self.assertTrue(
+                tier_path.exists() and tier_path.is_dir(),
+                f"Detection tier '{tier}' must exist in {detection_dir}"
+            )
+
+        reading_dir = DATASET_DIR / "reading"
+        self.assertTrue(reading_dir.exists() and reading_dir.is_dir(), "dataset/reading must exist")
+        expected_reading_tiers = ["cropped", "labeled", "verified", "versions"]
+        for tier in expected_reading_tiers:
+            tier_path = reading_dir / tier
+            self.assertTrue(
+                tier_path.exists() and tier_path.is_dir(),
+                f"Reading tier '{tier}' must exist in {reading_dir}"
+            )
+
     def test_ready_version_naming_convention(self):
         """Verifies that versions in dataset/ready/ adhere to YYYYMMDDhhmm."""
         ready_dir = DATASET_DIR / "ready"

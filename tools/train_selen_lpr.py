@@ -121,7 +121,7 @@ class LeftToRightCTCHead(nn.Module):
         d_model: int = 256,
         hidden_size: Optional[int] = None,
         vocab_size: int = VOCAB_SIZE,
-        time_steps: int = 28,
+        time_steps: int = 14,
         num_layers: int = 2,
     ):
         super().__init__()
@@ -191,7 +191,10 @@ def decode_and_split_ctc(logits: torch.Tensor, idx2char: Dict[int, str], blank_i
     Greedy CTC decode (B, W, V) -> list of (d3_str, d4_str) pairs.
     1. Collapses consecutive duplicate indices and removes blank index.
     2. Deterministically splits at the last Thai consonant (U+0E01 to U+0E2E).
+    3. Enforces DLT max lengths: d3 ≤ 3 chars, d4 ≤ 4 digits.
     """
+    MAX_D3 = 3
+    MAX_D4 = 4
     preds = logits.argmax(dim=-1).cpu().tolist()
     results: List[Tuple[str, str]] = []
     for seq in preds:
@@ -205,9 +208,17 @@ def decode_and_split_ctc(logits: torch.Tensor, idx2char: Dict[int, str], blank_i
             if "\u0e01" <= ch <= "\u0e2e":
                 last_thai_idx = i
         if last_thai_idx != -1:
-            results.append((full_str[:last_thai_idx + 1], full_str[last_thai_idx + 1:]))
+            d3 = full_str[:last_thai_idx + 1]
+            d4 = full_str[last_thai_idx + 1:]
         else:
-            results.append(("", full_str))
+            d3 = ""
+            d4 = full_str
+
+        # 3. DLT length enforcement: clamp to max allowed lengths
+        d3 = d3[:MAX_D3]
+        d4 = d4[:MAX_D4]
+
+        results.append((d3, d4))
     return results
 
 
@@ -231,9 +242,11 @@ class SelenLPR(nn.Module):
         vocab_size: int = VOCAB_SIZE,
         ctc_hidden_size: Optional[int] = None,
         ctc_num_layers: int = 2,
+        time_steps: int = 14,
     ):
         super().__init__()
         self.d_model = d_model
+        self.time_steps = time_steps
 
         # 1. Vision Backbone (Frozen in fine-tuning)
         mobilenet = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
@@ -258,14 +271,14 @@ class SelenLPR(nn.Module):
             nn.Linear(128, len(PLATE_TYPES))
         )
 
-        # 5. Head 2: Upgraded Left-to-Right CTC Sequence Head with 2-Layer BiLSTM Neck (W=28, Vocab=52)
-        # Ingests [batch_size, channels, height, width] from backbone and processes via 2-layer BiLSTM
+        # 5. Head 2: Upgraded Left-to-Right CTC Sequence Head with 2-Layer BiLSTM Neck (W=14, Vocab=52)
+        # Max output: d3(3) + d4(4) = 7 characters, CTC needs ~2x time steps = 14
         self.ctc_head = LeftToRightCTCHead(
             in_channels=d_model,
             d_model=d_model,
             hidden_size=ctc_hidden_size,
             vocab_size=vocab_size,
-            time_steps=28,
+            time_steps=time_steps,
             num_layers=ctc_num_layers,
         )
 
@@ -348,7 +361,7 @@ class SelenMultiTaskLoss(nn.Module):
     """
     Multi-Task CTC Loss for Thai LPR (ASD-STE100 / ISO 24495-1:2023 Compliant).
     Uses nn.CTCLoss(blank=0, zero_infinity=True).
-    Formats logits as (28, Batch, Vocab) using log_softmax(dim=-1).
+    Formats logits as (T, Batch, Vocab) using log_softmax(dim=-1).
     Sets total_loss = loss_ctc during the CTC sequence head training phase.
     """
     def __init__(self, blank_idx: int = CTC_BLANK_IDX):
@@ -360,7 +373,7 @@ class SelenMultiTaskLoss(nn.Module):
         batch_size = ctc_logits.size(0)
         time_steps = ctc_logits.size(1)
 
-        # Format logits as (28, Batch, Vocab) with log_softmax
+        # Format logits as (T, Batch, Vocab) with log_softmax
         log_probs = ctc_logits.log_softmax(dim=-1).permute(1, 0, 2)
         input_lengths = torch.full((batch_size,), time_steps, dtype=torch.long, device=ctc_logits.device)
 
@@ -388,7 +401,7 @@ class MultiTaskPlateDataset(Dataset):
     Extracts image, plate_type_idx, seq_targets, target_lengths, and prov_idx.
     Strips <SOS>, <EOS>, <PAD> and creates unified target sequences.
     """
-    def __init__(self, data_dirs: List[Path], img_h: int = 64, img_w: int = 384, max_seq_len: int = 28):
+    def __init__(self, data_dirs: List[Path], img_h: int = 64, img_w: int = 384, max_seq_len: int = 7):
         self.img_h = img_h
         self.img_w = img_w
         self.max_seq_len = max_seq_len
@@ -423,32 +436,121 @@ class MultiTaskPlateDataset(Dataset):
         self.samples = deduped
         print(f"[{get_utc_timestamp()}] [DATASET] Loaded {len(self.samples):,} unique multi-task samples.")
 
+    # Valid DLT character set for d3: digits 0-9 and 41 Thai consonants
+    _VALID_D3_CHARS = set("0123456789" + THAI_CONSONANTS)
+    # Valid DLT character set for d4: digits 0-9 only
+    _VALID_D4_CHARS = set("0123456789")
+    # Maximum lengths per DLT specification
+    _MAX_D3_LEN = 3
+    _MAX_D4_LEN = 4
+
     @staticmethod
     def parse_metadata(p: Path) -> Tuple[str, str, str, str]:
-        parts = p.stem.split("_")
+        """
+        Parse plate metadata from folder name first, then filename fallback.
+        Folder naming convention: <PlateType>_<d3>_<d4>_<Province>
+        Filename convention:      <prefix>_<PlateType>_<d3>_<d4>_<Province>[_<suffix>].<ext>
+
+        DLT Enforcement:
+          - d3: max 3 characters (digits + 41 Thai consonants)
+          - d4: max 4 characters (digits only)
+        """
         plate_type = "WhiteBlackCar"
-        if len(parts) >= 5 and parts[-1] and parts[-2] and parts[-3]:
-            plate_type = parts[-4] if len(parts) >= 5 else "WhiteBlackCar"
-            d3 = parts[-3]
-            d4 = parts[-2]
-            prov = parts[-1]
-        elif len(parts) >= 4 and parts[-1] and parts[-2] and parts[-3]:
-            d3 = parts[-3]
-            d4 = parts[-2]
-            prov = parts[-1]
-        else:
-            folder_parts = p.parent.name.split("_")
-            if len(folder_parts) >= 4:
-                plate_type = folder_parts[-4] if len(folder_parts) >= 4 else "WhiteBlackCar"
-                d3 = folder_parts[-3]
-                d4 = folder_parts[-2]
-                prov = folder_parts[-1]
-            elif len(folder_parts) == 3:
-                d3, d4, prov = folder_parts[0], folder_parts[1], folder_parts[2]
-            else:
-                d3 = parts[-3] if len(parts) >= 3 else ""
-                d4 = parts[-2] if len(parts) >= 2 else ""
-                prov = parts[-1] if len(parts) >= 1 else ""
+        d3 = ""
+        d4 = ""
+        prov = ""
+        parsed = False
+
+        # Strategy 1: Parse from parent folder name (authoritative, no suffix noise)
+        folder_name = p.parent.name
+        folder_parts = folder_name.split("_")
+        if len(folder_parts) >= 4:
+            # Folder format: <PlateType>_<d3>_<d4>_<Province>
+            # Province may contain underscores (e.g., พระนครศรีอยุธยา), so rejoin tail
+            candidate_pt = folder_parts[0]
+            candidate_d3 = folder_parts[1]
+            candidate_d4 = folder_parts[2]
+            candidate_prov = "_".join(folder_parts[3:])
+
+            # Validate: d3 must be ≤ 3 chars of valid DLT characters, d4 must be ≤ 4 digits
+            d3_valid = (
+                0 < len(candidate_d3) <= MultiTaskPlateDataset._MAX_D3_LEN
+                and all(c in MultiTaskPlateDataset._VALID_D3_CHARS for c in candidate_d3)
+            )
+            d4_valid = (
+                0 < len(candidate_d4) <= MultiTaskPlateDataset._MAX_D4_LEN
+                and all(c in MultiTaskPlateDataset._VALID_D4_CHARS for c in candidate_d4)
+            )
+            if d3_valid or d4_valid:
+                plate_type = candidate_pt
+                d3 = candidate_d3 if d3_valid else ""
+                d4 = candidate_d4 if d4_valid else ""
+                prov = candidate_prov
+                parsed = True
+        elif len(folder_parts) == 3:
+            # Folder format: <d3>_<d4>_<Province>
+            candidate_d3, candidate_d4, candidate_prov = folder_parts[0], folder_parts[1], folder_parts[2]
+            d3_valid = (
+                0 < len(candidate_d3) <= MultiTaskPlateDataset._MAX_D3_LEN
+                and all(c in MultiTaskPlateDataset._VALID_D3_CHARS for c in candidate_d3)
+            )
+            d4_valid = (
+                0 < len(candidate_d4) <= MultiTaskPlateDataset._MAX_D4_LEN
+                and all(c in MultiTaskPlateDataset._VALID_D4_CHARS for c in candidate_d4)
+            )
+            if d3_valid or d4_valid:
+                d3 = candidate_d3 if d3_valid else ""
+                d4 = candidate_d4 if d4_valid else ""
+                prov = candidate_prov
+                parsed = True
+
+        # Strategy 2: Parse from filename stem (fallback, handle _suffix)
+        if not parsed:
+            parts = p.stem.split("_")
+            # Try 5-part tail: ..._<PlateType>_<d3>_<d4>_<Province>_<suffix>
+            if len(parts) >= 5:
+                # Walk backwards looking for a valid plate_type token
+                for offset in range(4, min(len(parts), 8)):
+                    candidate_pt = parts[-offset]
+                    pt_match = match_plate_type(candidate_pt)
+                    if pt_match and pt_match not in ["+", "-"]:
+                        idx = len(parts) - offset
+                        candidate_d3 = parts[idx + 1] if idx + 1 < len(parts) else ""
+                        candidate_d4 = parts[idx + 2] if idx + 2 < len(parts) else ""
+                        candidate_prov = parts[idx + 3] if idx + 3 < len(parts) else ""
+                        d3_valid = (
+                            0 < len(candidate_d3) <= MultiTaskPlateDataset._MAX_D3_LEN
+                            and all(c in MultiTaskPlateDataset._VALID_D3_CHARS for c in candidate_d3)
+                        )
+                        d4_valid = (
+                            0 < len(candidate_d4) <= MultiTaskPlateDataset._MAX_D4_LEN
+                            and all(c in MultiTaskPlateDataset._VALID_D4_CHARS for c in candidate_d4)
+                        )
+                        if d3_valid or d4_valid:
+                            plate_type = pt_match
+                            d3 = candidate_d3 if d3_valid else ""
+                            d4 = candidate_d4 if d4_valid else ""
+                            prov = candidate_prov
+                            parsed = True
+                            break
+
+            # Legacy fallback: last 3 parts as d3_d4_prov
+            if not parsed and len(parts) >= 3:
+                candidate_d3 = parts[-3]
+                candidate_d4 = parts[-2]
+                candidate_prov = parts[-1]
+                d3_valid = (
+                    0 < len(candidate_d3) <= MultiTaskPlateDataset._MAX_D3_LEN
+                    and all(c in MultiTaskPlateDataset._VALID_D3_CHARS for c in candidate_d3)
+                )
+                d4_valid = (
+                    0 < len(candidate_d4) <= MultiTaskPlateDataset._MAX_D4_LEN
+                    and all(c in MultiTaskPlateDataset._VALID_D4_CHARS for c in candidate_d4)
+                )
+                if d3_valid or d4_valid:
+                    d3 = candidate_d3 if d3_valid else ""
+                    d4 = candidate_d4 if d4_valid else ""
+                    prov = candidate_prov
 
         if d3 in ["+", "-"]: d3 = ""
         if d4 in ["+", "-"]: d4 = ""
@@ -459,8 +561,13 @@ class MultiTaskPlateDataset(Dataset):
         if not matched_pt or matched_pt in ["+", "-"]:
             matched_pt = "WhiteBlackCar"
 
-        # Consonant clean
+        # DLT consonant remapping
         d3 = d3.replace("ฃ", "ข").replace("ฅ", "ค")
+
+        # Final length enforcement (hard clamp)
+        d3 = d3[:MultiTaskPlateDataset._MAX_D3_LEN]
+        d4 = d4[:MultiTaskPlateDataset._MAX_D4_LEN]
+
         prov = match_province_value(prov) if prov else ""
         return matched_pt, d3, d4, prov
 
@@ -491,11 +598,11 @@ class MultiTaskPlateDataset(Dataset):
         # 1. Plate Type Target
         type_idx = TYPE_TO_IDX.get(pt, 0)
 
-        # 2. Unified CTC Sequence Target (Clean d3 + clean d4)
-        # Strip <SOS>, <EOS>, and <PAD> tokens
-        d3_clean = normalize_thai_script(d3)
+        # 2. Unified CTC Sequence Target (Clean d3 ≤ 3 chars + clean d4 ≤ 4 digits)
+        d3_clean = normalize_thai_script(d3)[:self._MAX_D3_LEN]
+        d4_clean = d4[:self._MAX_D4_LEN]
         d3_indices = [CTC_CHAR_TO_IDX[c] for c in d3_clean if c in CTC_CHAR_TO_IDX and c != "<pad>"]
-        d4_indices = [CTC_CHAR_TO_IDX[c] for c in d4 if c in CTC_CHAR_TO_IDX and c != "<pad>"]
+        d4_indices = [CTC_CHAR_TO_IDX[c] for c in d4_clean if c in CTC_CHAR_TO_IDX and c != "<pad>"]
         full_indices = d3_indices + d4_indices
         seq_len = len(full_indices)
 
@@ -561,7 +668,7 @@ def train_selen_lpr(
     print("=" * 80)
 
     # 1. Dataset & DataLoader (95% Train / 5% Validation)
-    full_dataset = MultiTaskPlateDataset(data_dirs=data_dirs, img_h=64, img_w=384, max_seq_len=28)
+    full_dataset = MultiTaskPlateDataset(data_dirs=data_dirs, img_h=64, img_w=384, max_seq_len=7)
     total_len = len(full_dataset)
     val_len = int(total_len * 0.05)
     train_len = total_len - val_len
@@ -641,6 +748,14 @@ def train_selen_lpr(
 
     for epoch in range(1, epochs + 1):
         model.train()
+        # Keep frozen modules strictly in eval mode to preserve ImageNet/checkpoint
+        # BatchNorm running statistics and disable Dropout on locked heads
+        model.backbone.eval()
+        model.proj.eval()
+        model.encoder.eval()
+        model.type_head.eval()
+        model.prov_head.eval()
+
         train_loss = 0.0
         train_batches = 0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs:02d} [Train]")
@@ -809,24 +924,33 @@ def train_selen_lpr(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train selen-lpr-0.0.1 with Unified Left-to-Right CTC Head")
+    parser.add_argument("--data-dirs", type=str, default="", help="Comma-separated dataset directories (defaults to production release)")
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=0.0005)
     parser.add_argument("--loss-mode", type=str, default="ctc")
     parser.add_argument("--resume", type=str, default="", help="Path to checkpoint")
+    parser.add_argument("--output-dir", type=str, default="runs/train/selen_lpr_0.0.1", help="Output directory for runs and checkpoints")
+    parser.add_argument("--export-path", type=str, default="models/reader/selen-lpr-0.0.1/best_reader.pth", help="Final exported checkpoint path")
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--dry-run", action="store_true", help="Run 1-epoch dry run for verification")
     args = parser.parse_args()
 
-    data_directories = [
-        ROOT_DIR / "dataset" / "labeled" / "manually_labeled" / "plates",
-        ROOT_DIR / "dataset" / "dataset-cctv-synthetic" / "plates",
-        ROOT_DIR / "dataset" / "dataset-mobile-synthetic" / "plates",
-        ROOT_DIR / "dataset" / "ready" / "202610261140",
-        ROOT_DIR / "dataset" / "ready" / "mobile",
-        ROOT_DIR / "dataset" / "verified" / "dataset-staging-approved",
-        ROOT_DIR / "dataset" / "verified" / "curated_lpr_dataset",
-    ]
+    if args.data_dirs:
+        data_directories = [Path(d.strip()) for d in args.data_dirs.split(",") if d.strip()]
+    else:
+        # Default to latest consolidated ready dataset release (202611030335)
+        default_ready = ROOT_DIR / "dataset" / "ready" / "202611030335"
+        if default_ready.is_dir():
+            data_directories = [default_ready]
+        else:
+            data_directories = [
+                ROOT_DIR / "dataset" / "ready" / "202610261140",
+                ROOT_DIR / "dataset" / "snapshot" / "mobile",
+                ROOT_DIR / "dataset" / "verified" / "dataset-staging-approved",
+                ROOT_DIR / "dataset" / "dataset-cctv-synthetic" / "plates",
+                ROOT_DIR / "dataset" / "dataset-mobile-synthetic" / "plates",
+            ]
 
     train_selen_lpr(
         data_dirs=data_directories,
@@ -836,5 +960,7 @@ if __name__ == "__main__":
         device=args.device,
         loss_mode=args.loss_mode,
         resume=args.resume,
+        output_dir=args.output_dir,
+        model_export_path=args.export_path,
         dry_run=args.dry_run
     )

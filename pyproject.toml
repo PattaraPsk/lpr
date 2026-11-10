@@ -52,5 +52,5 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["tools*"]
-exclude = ["archive*", "dataset*", "runs*"]
+include = ["src*", "tools*"]
+exclude = ["archive*", "dataset*", "data*", "outputs*", "runs*"]

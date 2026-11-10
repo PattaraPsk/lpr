@@ -1,0 +1,37 @@
+# Training & Optimization Configuration
+training:
+  seed: 42
+  device: "cuda"          # Fallback to "cpu" if CUDA unavailable
+  precision: "fp16"       # Mixed precision training: "fp32" or "fp16"
+  epochs: 50
+  batch_size: 32
+  num_workers: 4
+  val_interval: 1         # Run validation every N epochs
+  log_interval: 10        # Log metrics every N batches
+
+optimizer:
+  type: "AdamW"
+  lr: 0.001
+  weight_decay: 0.0001
+  betas: [0.9, 0.999]
+
+scheduler:
+  type: "CosineAnnealingLR"
+  t_max: 50
+  min_lr: 0.00001
+
+loss:
+  type: "CTCLoss"
+  zero_infinity: true
+
+checkpoints:
+  save_dir: "outputs/checkpoints"
+  save_best_only: false
+  save_top_k: 3
+  filename_pattern: "checkpoint_epoch_{epoch:03d}_acc_{acc:.4f}.pt"
+  best_checkpoint_name: "best_model.pt"
+
+logging:
+  log_dir: "outputs/logs"
+  log_filename: "train_run.log"
+  use_tensorboard: false

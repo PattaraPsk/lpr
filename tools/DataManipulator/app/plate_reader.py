@@ -6,8 +6,9 @@ Extracts d3 (category letters/prefix), d4 (digits), and province with comparison
 import os
 import sys
 import re
+import math
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Optional, Tuple, Dict, Any, List, Union
 
 import numpy as np
 from PIL import Image
@@ -312,7 +313,8 @@ class PlateReader:
 
         self.img_h = 64
         self.img_w = 600
-        self.model: Optional[VisionAttentionOCR] = None
+        self.model: Optional[Any] = None
+        self.arch_type: str = "vision_attention"
         self._cache: Dict[str, Dict[str, Any]] = {}
         
         if self.weights_path and self.weights_path.exists():
@@ -325,6 +327,59 @@ class PlateReader:
         if cls._instance is None:
             cls._instance = cls(weights_path=weights_path)
         return cls._instance
+
+    def switch_model(self, model_path: Union[str, Path]) -> bool:
+        """Switch active reader model weights to a new checkpoint."""
+        p = Path(model_path).resolve()
+        if not p.is_file():
+            self.error_msg = f"Model checkpoint not found: {p}"
+            return False
+            
+        self.weights_path = p
+        self._cache.clear()
+        self._load_model()
+        return self.model is not None
+
+    @classmethod
+    def get_available_models(cls) -> Dict[str, str]:
+        """Discovers available OCR reader models in models/reader that can be successfully loaded."""
+        app_dir = Path(__file__).resolve().parent
+        root = app_dir.parents[2]
+        models = {}
+        
+        candidates = []
+        reader_root = root / "models" / "reader"
+        if reader_root.is_dir():
+            for pth in reader_root.rglob("*.pth"):
+                rel = pth.relative_to(reader_root)
+                label = f"OCR: {str(rel).replace(chr(92), '/')}"
+                candidates.append((label, pth.resolve()))
+                
+        trained = root / "runs" / "train" / "reader" / "best_reader.pth"
+        if trained.is_file():
+            candidates.append(("OCR: Fine-Tuned (runs/train/reader)", trained.resolve()))
+
+        # Verify each candidate model architecture before offering in UI
+        for label, p in candidates:
+            try:
+                sd = torch.load(p, map_location="cpu")
+                if not isinstance(sd, dict):
+                    continue
+                clean = {k.replace("module.", ""): v for k, v in sd.items()}
+                if "model_state_dict" in clean and isinstance(clean["model_state_dict"], dict):
+                    clean = {k.replace("module.", ""): v for k, v in clean["model_state_dict"].items()}
+                # Check for one of the supported architectures
+                if (
+                    any("FeatureExtraction" in k for k in clean.keys()) or
+                    any("d3_decoder" in k for k in clean.keys()) or
+                    any("prov_query" in k for k in clean.keys()) or
+                    "prov_head.weight" in clean
+                ):
+                    models[label] = str(p)
+            except Exception:
+                continue
+            
+        return models
 
     def _resolve_weights_path(self, explicit_path: Optional[str] = None) -> Optional[Path]:
         if explicit_path and Path(explicit_path).is_file():
@@ -352,17 +407,54 @@ class PlateReader:
 
     def _load_model(self):
         try:
-            self.model = VisionAttentionOCR(num_classes=187, batch_max_length=25)
             ckpt = torch.load(str(self.weights_path), map_location=self.device)
-            if isinstance(ckpt, dict):
+            if not isinstance(ckpt, dict):
+                raise ValueError("Checkpoint is not a dictionary state_dict")
+
+            if "model_state_dict" in ckpt and isinstance(ckpt["model_state_dict"], dict):
+                clean_sd = {k.replace("module.", ""): v for k, v in ckpt["model_state_dict"].items()}
+            else:
                 clean_sd = {k.replace("module.", ""): v for k, v in ckpt.items()}
+
+            # 1. SelenLPR-E architecture (EasyOCR Thai Foundation Multi-Task Reader)
+            if (
+                ckpt.get("model_name") == "selenLPR-E" or
+                ("prov_head.weight" in clean_sd and "type_head.weight" in clean_sd)
+            ):
+                from tools.train_selen_lpr_e import SelenLPR_E
+                self.model = SelenLPR_E()
                 self.model.load_state_dict(clean_sd)
+                self.arch_type = "selen_lpr_e"
+
+            # 2. VisionAttentionOCR architecture
+            elif any("FeatureExtraction" in k for k in clean_sd.keys()):
+                self.model = VisionAttentionOCR(num_classes=187, batch_max_length=25)
+                self.model.load_state_dict(clean_sd)
+                self.arch_type = "vision_attention"
+
+            # 3. SelenLPR architecture (d3_decoder & ctc_head)
+            elif any("d3_decoder" in k for k in clean_sd.keys()):
+                from tools.train_selen_lpr import SelenLPR, CTC_CHARS as SELEN_CHARS
+                self.model = SelenLPR(vocab_size=len(SELEN_CHARS), time_steps=14)
+                self.model.load_state_dict(clean_sd)
+                self.arch_type = "selen_lpr"
+
+            # 4. SelenPaddleOCR architecture (prov_query & ctc_head)
+            elif any("prov_query" in k for k in clean_sd.keys()):
+                from tools.train_paddleocr_thai import SelenPaddleOCR, CTC_CHARS as PADDLE_CHARS
+                self.model = SelenPaddleOCR(vocab_size=len(PADDLE_CHARS), time_steps=14)
+                self.model.load_state_dict(clean_sd)
+                self.arch_type = "paddleocr"
+
+            else:
+                raise ValueError("Unknown or unsupported OCR model architecture")
+
             self.model.to(self.device)
             self.model.eval()
             self.error_msg = None
         except Exception as e:
             self.model = None
-            self.error_msg = f"Failed to load weights from {self.weights_path}: {e}"
+            self.error_msg = f"Failed to load weights from {self.weights_path.name}: {e}"
 
     def preprocess_image(self, pil_img: Image.Image) -> torch.Tensor:
         """Authentic NormalizePAD transform matching edge_reader."""
@@ -426,21 +518,83 @@ class PlateReader:
             }
 
         try:
-            tensor = self.preprocess_image(pil_img).to(self.device)
-            with torch.no_grad():
-                preds = self.model(tensor)
-                # Compute confidence from softmax
-                probs = F.softmax(preds, dim=-1)
-                max_probs, indices = probs.max(dim=-1)
-                
-                token_list = indices[0].cpu().numpy().tolist()
-                prob_list = max_probs[0].cpu().numpy().tolist()
+            arch = getattr(self, "arch_type", "vision_attention")
 
-            d3, d4, province, full_plate = decode_tokens_to_plate(token_list)
-            
-            # Compute average confidence over valid tokens
-            valid_probs = [p for p in prob_list if p > 0.05]
-            conf = float(np.mean(valid_probs)) if valid_probs else 0.0
+            if arch == "vision_attention":
+                tensor = self.preprocess_image(pil_img).to(self.device)
+                with torch.no_grad():
+                    preds = self.model(tensor)
+                    probs = F.softmax(preds, dim=-1)
+                    max_probs, indices = probs.max(dim=-1)
+                    token_list = indices[0].cpu().numpy().tolist()
+                    prob_list = max_probs[0].cpu().numpy().tolist()
+
+                d3, d4, province, full_plate = decode_tokens_to_plate(token_list)
+                valid_probs = [p for p in prob_list if p > 0.05]
+                conf = float(np.mean(valid_probs)) if valid_probs else 0.0
+
+            elif arch == "selen_lpr_e":
+                from tools.train_selen_lpr_e import decode_selen_lpr_e
+                im = pil_img.convert("RGB")
+                w, h = im.size
+                ratio = w / float(max(h, 1))
+                resized_w = min(int(math.ceil(64 * ratio)), 256)
+                resized_crop = im.resize((resized_w, 64), Image.BICUBIC)
+                arr = np.array(resized_crop, dtype=np.float32) / 255.0
+                arr = (arr - 0.5) / 0.5
+                t = torch.from_numpy(arr).permute(2, 0, 1)
+                pad = torch.zeros(3, 64, 256, dtype=torch.float32)
+                pad[:, :, :resized_w] = t
+                if 256 != resized_w:
+                    pad[:, :, resized_w:] = t[:, :, resized_w - 1].unsqueeze(2).expand(3, 64, 256 - resized_w)
+                tensor = pad.unsqueeze(0).to(self.device)
+
+                with torch.no_grad():
+                    preds = self.model(tensor)
+                    decoded_list = decode_selen_lpr_e(preds)
+                    dec = decoded_list[0]
+                    d3 = dec["d3"]
+                    d4 = dec["d4"]
+                    province = dec["province"]
+                    full_plate = dec["full_plate"]
+                    conf = round(float(torch.softmax(preds["ctc_logits"], dim=-1).max(dim=-1).values.mean().item()), 4)
+                token_list = []
+
+            elif arch == "selen_lpr":
+                from tools.train_selen_lpr import CTC_IDX_TO_CHAR, decode_and_split_ctc, PROVINCE_NAMES
+                from tools.label_unverified_with_selen import preprocess_plate_image, clamp_d3_d4
+                tensor = preprocess_plate_image(pil_img.convert("RGB")).to(self.device)
+                with torch.no_grad():
+                    preds = self.model(tensor)
+                    pairs = decode_and_split_ctc(preds["ctc_logits"], CTC_IDX_TO_CHAR)
+                    raw_d3, raw_d4 = pairs[0]
+                    d3, d4 = clamp_d3_d4(raw_d3, raw_d4)
+                    prov_idx = preds["prov_logits"].argmax(dim=-1).item()
+                    province = PROVINCE_NAMES[prov_idx] if prov_idx < len(PROVINCE_NAMES) else ""
+                    full_plate = f"{d3} {d4} {province}".strip()
+                    conf = round(float(torch.softmax(preds["ctc_logits"], dim=-1).max(dim=-1).values.mean().item()), 4)
+                token_list = []
+
+            elif arch == "paddleocr":
+                from tools.train_paddleocr_thai import (
+                    decode_and_split_ctc_single_char_prov,
+                    AUX_IDX_TO_PROV
+                )
+                from tools.label_unverified_with_selen import preprocess_plate_image, clamp_d3_d4
+                tensor = preprocess_plate_image(pil_img.convert("RGB")).to(self.device)
+                with torch.no_grad():
+                    preds = self.model(tensor)
+                    pairs = decode_and_split_ctc_single_char_prov(preds["ctc_logits"])
+                    raw_d3, raw_d4, ctc_prov = pairs[0]
+                    d3, d4 = clamp_d3_d4(raw_d3, raw_d4)
+                    prov_idx = preds["prov_logits"].argmax(dim=-1).item()
+                    province = ctc_prov if ctc_prov else AUX_IDX_TO_PROV.get(prov_idx, "")
+                    full_plate = f"{d3} {d4} {province}".strip()
+                    conf = round(float(torch.softmax(preds["ctc_logits"], dim=-1).max(dim=-1).values.mean().item()), 4)
+                token_list = []
+
+            else:
+                raise ValueError(f"Unknown reader architecture: {arch}")
 
             result = {
                 "d3": d3,

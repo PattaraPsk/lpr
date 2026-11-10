@@ -99,15 +99,22 @@ Datasets built via `tools/owod/build_dlt_lpr_dataset.py` or `tools/owod/core/dat
 }
 ```
 
-### 5. Dataset Lifecycle & Storage Hierarchy
-The `dataset/` directory is structured into 6 ISO-compliant lifecycle tiers:
-- **`dataset/zip/`**: Compressed dataset archives and baseline bundles (`.zip`).
-- **`dataset/raw/`**: Raw source video files and streaming CCTV partitions (`.mp4`).
-- **`dataset/snapshot/`**: Extracted frame snapshots, vehicle crops, and uncurated frame captures.
-- **`dataset/labeled/`**: Pre-annotated, synthetic, or model-inferred datasets (e.g. YOLO detector, OCR).
-- **`dataset/verified/`**: Human-reviewed, curated, and staging-approved datasets awaiting release packaging.
-- **`dataset/ready/`**: Production-ready, versioned releases indexed by timestamp `YYYYMMDDhhmm`.
-  - Inside each version directory (`ready/YYYYMMDDhhmm/`), images are grouped into subfolders by canonical license plate identity (`{plate_type}_{d3}_{d4}_{province}`).
+### 5. Dataset Lifecycle & Two-Stream Storage Hierarchy
+The repository organizes datasets into a decoupled two-stream lifecycle separating **Detection** from **Reading**:
+
+#### A. Detection Dataset Pipeline (`dataset/detection/`)
+1. **`raw_video/`**: Original CCTV/camera surveillance video footage (`.mp4`, `.avi`, `.ts`).
+2. **`annotated/`**: Extracted frames with candidate detection labels and bounding boxes (YOLO format).
+3. **`verified/`**: Human QA-verified bounding boxes conforming to ISO/IEC 5259-2.
+4. **`versions/`**: Versioned detection releases partitioned into `train/`, `val/`, and `test/` splits.
+
+#### B. Reading Dataset Pipeline (`dataset/reading/`)
+1. **`cropped/`**: License plate crops isolated from full frames or mobile cameras.
+2. **`labeled/`**: Plate crops with preliminary OCR transcriptions, auto-labeled batches, and synthetic plates.
+3. **`verified/`**: Audited ground-truth annotations compliant with DLT rules (41 consonants, remapping, ISO 3166-2:TH).
+4. **`versions/`**: Certified production releases indexed by `YYYYMMDDhhmm` (e.g. `202611030335/`) grouped into plate identity subfolders with `version_manifest.json`.
+
+*(Note: For backward compatibility, legacy root tiers `zip/`, `raw/`, `snapshot/`, `labeled/`, `verified/`, and `ready/` remain supported.)*
 
 ### 6. ISO/IEC 42001:2023 AI Management System & Change Control Governance
 This repository implements an auditable AI Management System compliant with ISO/IEC 42001:2023:

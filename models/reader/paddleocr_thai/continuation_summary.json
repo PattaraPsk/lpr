@@ -1,0 +1,66 @@
+{
+  "model_name": "selen-paddleocr-singlechar-0.0.1",
+  "architecture": "SelenPaddleOCR (MobileNetV3 + Transformer Context + 2-Layer BiLSTM LeftToRightCTCHead)",
+  "epochs_trained": 103,
+  "target_exact_acc": 95.0,
+  "status": "stopped_by_user",
+  "best_val_loss": 0.2073,
+  "best_exact_accuracy": 92.2,
+  "sha256": "1EBA29F305BEDAC7CEE915B55DBCD03DE95BCA62DBBEF8E70F5341EA84563436",
+  "last_epoch_metrics": {
+    "epoch": 103,
+    "val_loss": 0.4523,
+    "acc_plate_type": 99.73,
+    "acc_d3": 87.42,
+    "acc_d4": 82.52,
+    "acc_provinces": 95.9,
+    "acc_exact_plate": 71.76
+  },
+  "history_tail": [
+    {
+      "epoch": 99,
+      "val_loss": 0.4537,
+      "acc_plate_type": 99.46,
+      "acc_d3": 85.61,
+      "acc_d4": 83.25,
+      "acc_provinces": 95.9,
+      "acc_exact_plate": 70.81
+    },
+    {
+      "epoch": 100,
+      "val_loss": 0.4807,
+      "acc_plate_type": 99.6,
+      "acc_d3": 86.15,
+      "acc_d4": 83.46,
+      "acc_provinces": 94.96,
+      "acc_exact_plate": 71.49
+    },
+    {
+      "epoch": 101,
+      "val_loss": 0.4648,
+      "acc_plate_type": 99.66,
+      "acc_d3": 86.35,
+      "acc_d4": 84.06,
+      "acc_provinces": 96.3,
+      "acc_exact_plate": 73.1
+    },
+    {
+      "epoch": 102,
+      "val_loss": 0.4401,
+      "acc_plate_type": 99.66,
+      "acc_d3": 85.94,
+      "acc_d4": 83.99,
+      "acc_provinces": 95.83,
+      "acc_exact_plate": 72.56
+    },
+    {
+      "epoch": 103,
+      "val_loss": 0.4523,
+      "acc_plate_type": 99.73,
+      "acc_d3": 87.42,
+      "acc_d4": 82.52,
+      "acc_provinces": 95.9,
+      "acc_exact_plate": 71.76
+    }
+  ]
+}

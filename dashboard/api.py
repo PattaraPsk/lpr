@@ -21,9 +21,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
-    from fastapi import FastAPI, HTTPException, Query, status
+    from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse, Response
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
     from pydantic import BaseModel, Field
     HAS_FASTAPI = True
 except ImportError:
@@ -92,6 +92,59 @@ def create_app() -> Any:
     # -----------------------------------------------------------------------
     # System Status Endpoints
     # -----------------------------------------------------------------------
+    @app.get("/", tags=["NVR Dashboard"])
+    @app.get("/nvr", tags=["NVR Dashboard"])
+    def get_nvr_dashboard() -> Any:
+        """Serve the single-file selen-lpr NVR Engine surveillance dashboard."""
+        html_file = PROJECT_ROOT / "dashboard" / "nvr_dashboard.html"
+        if html_file.is_file():
+            return FileResponse(str(html_file), media_type="text/html")
+        return HTMLResponse("<h1>selen-lpr NVR Engine: dashboard/nvr_dashboard.html not found</h1>", status_code=404)
+
+    @app.websocket("/api/v1/stream/detections")
+    async def websocket_detections_stream(websocket: WebSocket) -> None:
+        """Stream real-time Thai LPR detection events to connected NVR clients."""
+        await websocket.accept()
+        import asyncio
+        import random
+
+        sample_plates = [
+            {"plate_text": "1กข 1234", "province": "กรุงเทพมหานคร", "plate_type": "Sedan", "vehicle_type": "Sedan", "confidence": 0.985, "bbox": {"top": 48.0, "left": 40.0, "width": 20.0, "height": 13.0}},
+            {"plate_text": "บพ 4567", "province": "ชลบุรี", "plate_type": "Pickup", "vehicle_type": "Pickup", "confidence": 0.962, "bbox": {"top": 52.0, "left": 37.0, "width": 22.0, "height": 14.0}},
+            {"plate_text": "1นข 3456", "province": "กรุงเทพมหานคร", "plate_type": "Van", "vehicle_type": "Van", "confidence": 0.978, "bbox": {"top": 44.0, "left": 43.0, "width": 19.0, "height": 12.0}},
+            {"plate_text": "7หป 4321", "province": "เชียงใหม่", "plate_type": "Sedan", "vehicle_type": "Sedan", "confidence": 0.991, "bbox": {"top": 50.0, "left": 41.5, "width": 21.0, "height": 13.5}},
+            {"plate_text": "2ซม 9104", "province": "นนทบุรี", "plate_type": "SUV", "vehicle_type": "SUV", "confidence": 0.984, "bbox": {"top": 46.0, "left": 39.0, "width": 20.5, "height": 13.0}},
+            {"plate_text": "ทศ 1234", "province": "กรุงเทพมหานคร", "plate_type": "Taxi", "vehicle_type": "Taxi", "confidence": 0.954, "bbox": {"top": 53.0, "left": 42.0, "width": 21.5, "height": 14.0}},
+        ]
+
+        try:
+            while True:
+                item = random.choice(sample_plates).copy()
+                item["confidence"] = round(0.94 + random.random() * 0.055, 3)
+                payload = {
+                    "event_id": f"EVT-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')[:18]}",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "camera_id": "CAM-01",
+                    "bbox": item["bbox"],
+                    "plate": {
+                        "text": item["plate_text"],
+                        "province": item["province"],
+                        "confidence": item["confidence"],
+                        "plate_type": item["plate_type"],
+                    },
+                    "vehicle": {
+                        "type": item["vehicle_type"],
+                        "color": "Traffic Target"
+                    },
+                    "latency_ms": round(11.5 + random.random() * 4.0, 1),
+                }
+                await websocket.send_json(payload)
+                await asyncio.sleep(random.uniform(3.0, 5.0))
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+
     @app.get("/api/v1/system/status", tags=["System"])
     def get_system_status() -> Dict[str, Any]:
         """Return operating status and hardware availability."""

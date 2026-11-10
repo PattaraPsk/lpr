@@ -1,3 +1,80 @@
+# Computer Vision & License Plate Recognition (LPR) Project
+
+An enterprise, edge-optimized Computer Vision framework for Thai License Plate Recognition (ALPR/ANPR), dataset preparation, CRNN/YOLO model training, and real-time inference.
+
+---
+
+## 📂 Project Architecture
+
+```text
+computer-vision-project/
+├── README.md
+├── pyproject.toml
+├── requirements.txt
+├── .gitignore
+├── configs/
+│   ├── dataset.yaml
+│   ├── model.yaml
+│   └── train.yaml
+├── data/
+│   ├── raw/
+│   ├── interim/
+│   ├── processed/
+│   └── splits/
+│       ├── train.txt
+│       ├── val.txt
+│       └── test.txt
+├── notebooks/
+│   ├── 01_data_exploration.ipynb
+│   └── 02_model_experiments.ipynb
+├── src/
+│   ├── data/
+│   │   ├── prepare.py
+│   │   └── dataset.py
+│   ├── models/
+│   │   ├── model.py
+│   │   └── losses.py
+│   ├── training/
+│   │   ├── train.py
+│   │   └── evaluate.py
+│   ├── inference/
+│   │   └── predict.py
+│   └── utils/
+│       ├── metrics.py
+│       └── visualization.py
+├── tests/
+│   ├── test_data.py
+│   └── test_model.py
+├── outputs/
+│   ├── checkpoints/
+│   ├── logs/
+│   └── predictions/
+└── scripts/
+    ├── download_data.sh
+    └── run_training.sh
+```
+
+### Quick Start
+
+```bash
+# 1. Prepare data splits
+python -m src.data.prepare --source-dir data/raw --splits-dir data/splits
+
+# 2. Run training with configs
+python -m src.training.train --dataset-config configs/dataset.yaml --model-config configs/model.yaml --train-config configs/train.yaml
+
+# 3. Evaluate checkpoint on validation split
+python -m src.training.evaluate --checkpoint outputs/checkpoints/best_model.pt --split data/splits/val.txt
+
+# 4. Run inference on single image
+python -m src.inference.predict --image path/to/plate.jpg --checkpoint outputs/checkpoints/best_model.pt
+
+# 5. Run unit tests
+python -m unittest tests/test_data.py tests/test_model.py
+```
+
+---
+
 # License Plate Reader (LPR) & OWOD Studio
 
 An end-to-end repository for Thai License Plate Reader (LPR), dataset annotation, Open-World Object Detection (OWOD) auto-labeling, and YOLO architecture surgery/pruning.

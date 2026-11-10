@@ -70,6 +70,170 @@ def match_vehicle_and_orientation(
     return matched_veh, matched_orient
 
 
+def compute_crop_sharpness(crop_bgr: np.ndarray) -> float:
+    """
+    Computes Laplacian variance sharpness score of an image crop.
+    Higher values indicate sharper edges and better optical focus.
+    """
+    if crop_bgr is None or crop_bgr.size == 0:
+        return 0.0
+    try:
+        gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    except Exception:
+        return 0.0
+
+
+class MotionDetector:
+    """
+    Edge-optimized Background/Foreground Motion Detector.
+    Uses downscaled MOG2 background modeling and morphological filtering
+    to extract moving foreground areas before running heavy neural vehicle detectors.
+    Eliminates computational overhead from static backgrounds and parked vehicles.
+    """
+
+    def __init__(
+        self,
+        history: int = 300,
+        var_threshold: float = 25.0,
+        detect_shadows: bool = False,
+        downsample_size: Tuple[int, int] = (640, 360),
+        min_motion_area: float = 400.0,
+        learning_rate: float = -1.0,
+    ):
+        self.history = history
+        self.var_threshold = var_threshold
+        self.detect_shadows = detect_shadows
+        self.downsample_size = downsample_size
+        self.min_motion_area = min_motion_area
+        self.learning_rate = learning_rate
+        self.subtractor = cv2.createBackgroundSubtractorMOG2(
+            history=history,
+            varThreshold=var_threshold,
+            detectShadows=detect_shadows
+        )
+        self.kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        self.kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        self.frame_count = 0
+
+    def update(self, frame: np.ndarray) -> Tuple[bool, List[List[int]], np.ndarray]:
+        """
+        Processes frame, updates background model, and returns:
+        (has_motion, motion_boxes, fg_mask).
+        Motion boxes are scaled back to frame resolution: [x1, y1, x2, y2].
+        """
+        self.frame_count += 1
+        orig_h, orig_w = frame.shape[:2]
+        small = cv2.resize(frame, self.downsample_size, interpolation=cv2.INTER_LINEAR)
+        fg_mask = self.subtractor.apply(small, learningRate=self.learning_rate)
+        fg_clean = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self.kernel_open)
+        fg_clean = cv2.morphologyEx(fg_clean, cv2.MORPH_DILATE, self.kernel_dilate)
+
+        contours, _ = cv2.findContours(fg_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        scale_x = orig_w / float(self.downsample_size[0])
+        scale_y = orig_h / float(self.downsample_size[1])
+
+        motion_boxes: List[List[int]] = []
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area >= self.min_motion_area:
+                x, y, w, h = cv2.boundingRect(c)
+                gx1 = max(0, int(x * scale_x))
+                gy1 = max(0, int(y * scale_y))
+                gx2 = min(orig_w, int((x + w) * scale_x))
+                gy2 = min(orig_h, int((y + h) * scale_y))
+                motion_boxes.append([gx1, gy1, gx2, gy2])
+
+        has_motion = len(motion_boxes) > 0
+        return has_motion, motion_boxes, fg_clean
+
+    def is_moving(self, box: List[float], motion_boxes: List[List[int]], min_overlap: float = 0.08) -> bool:
+        """
+        Determines whether candidate bounding box overlaps with any active moving foreground region.
+        """
+        if not motion_boxes:
+            return False
+        bx1, by1, bx2, by2 = box
+        bw = max(1.0, bx2 - bx1)
+        bh = max(1.0, by2 - by1)
+        b_area = bw * bh
+        bcx = (bx1 + bx2) * 0.5
+        bcy = (by1 + by2) * 0.5
+
+        for mx1, my1, mx2, my2 in motion_boxes:
+            # Check center point containment
+            if mx1 <= bcx <= mx2 and my1 <= bcy <= my2:
+                return True
+            # Check spatial intersection
+            ix1 = max(bx1, float(mx1))
+            iy1 = max(by1, float(my1))
+            ix2 = min(bx2, float(mx2))
+            iy2 = min(by2, float(my2))
+            if ix2 > ix1 and iy2 > iy1:
+                inter_area = (ix2 - ix1) * (iy2 - iy1)
+                m_area = max(1.0, float((mx2 - mx1) * (my2 - my1)))
+                if (inter_area / b_area) >= min_overlap or (inter_area / m_area) >= min_overlap:
+                    return True
+        return False
+
+
+def detect_moving_vehicles(
+    veh_detector: YOLO,
+    det_frame: np.ndarray,
+    motion_boxes: List[List[int]],
+    offset_x: int,
+    offset_y: int,
+    conf_thresh: float,
+    device: str,
+    motion_detector: Optional[MotionDetector] = None
+) -> List[Tuple[List[float], str, float]]:
+    """
+    Detects vehicles only when motion is present and strictly filters out stationary/parked vehicles.
+    """
+    if not motion_boxes:
+        return []
+
+    raw_vehicles = detect_vehicles(
+        veh_detector=veh_detector,
+        det_frame=det_frame,
+        offset_x=offset_x,
+        offset_y=offset_y,
+        conf_thresh=conf_thresh,
+        device=device
+    )
+
+    moving_vehicles: List[Tuple[List[float], str, float]] = []
+    for veh in raw_vehicles:
+        box = veh[0]
+        if motion_detector is not None:
+            if motion_detector.is_moving(box, motion_boxes):
+                moving_vehicles.append(veh)
+        else:
+            # Fallback inline overlap check
+            bx1, by1, bx2, by2 = box
+            b_area = max(1.0, (bx2 - bx1) * (by2 - by1))
+            bcx = (bx1 + bx2) * 0.5
+            bcy = (by1 + by2) * 0.5
+            is_mv = False
+            for mx1, my1, mx2, my2 in motion_boxes:
+                if mx1 <= bcx <= mx2 and my1 <= bcy <= my2:
+                    is_mv = True
+                    break
+                ix1 = max(bx1, float(mx1))
+                iy1 = max(by1, float(my1))
+                ix2 = min(bx2, float(mx2))
+                iy2 = min(by2, float(my2))
+                if ix2 > ix1 and iy2 > iy1:
+                    inter_area = (ix2 - ix1) * (iy2 - iy1)
+                    if (inter_area / b_area) >= 0.08:
+                        is_mv = True
+                        break
+            if is_mv:
+                moving_vehicles.append(veh)
+
+    return moving_vehicles
+
+
 def detect_vehicles(
     veh_detector: YOLO,
     det_frame: np.ndarray,

@@ -44,7 +44,7 @@ except Exception:
     pass
 
 from tools.DataManipulator.app.plate_reader import PlateReader
-from tools.DataManipulator.app.provinces import match_province_value, get_iso_code, normalize_thai_script
+from tools.DataManipulator.app.provinces import match_province_value, get_iso_code, normalize_thai_script, convert_to_dlt_international_plate
 from tools.DataManipulator.app.plate_types import match_plate_type
 
 # =============================================================================
@@ -574,11 +574,12 @@ def process_video_tracks(
         prov = consensus["province"] or best.ocr_result.get("province", "")
         full_plate = consensus["full_plate"] or f"{d3} {d4} {prov}".strip() or "UNKNOWN_PLATE"
 
-        # Sanitize for filename
-        clean_text = f"{d3}_{d4}_{prov}".strip("_")
-        clean_text = "".join(c if c.isalnum() or c in ["_", "-"] else "_" for c in clean_text)
-        if not clean_text:
-            clean_text = "plate"
+        # DLT International + ISO 3166-2:TH format for clean, ASCII filesystem naming
+        clean_text = convert_to_dlt_international_plate(d3, d4, prov)
+
+
+
+
 
         # 1. Save Best Plate Crop Snapshot
         crop_filename = f"{video_stem}_trk{trk.track_id:02d}_{clean_text}.jpg"

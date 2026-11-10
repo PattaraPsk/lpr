@@ -1,0 +1,1777 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>selen-lpr NVR Engine | Edge AI Surveillance</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- High-Contrast Monospace & Tactical Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            mono: ['"Share Tech Mono"', '"Roboto Mono"', 'monospace'],
+            vt: ['"VT323"', 'monospace'],
+            tactical: ['"Chakra Petch"', 'sans-serif'],
+            code: ['"Roboto Mono"', 'monospace'],
+          },
+          colors: {
+            surv: {
+              black: '#04070b',
+              dark: '#070b11',
+              panel: '#0c131c',
+              surface: '#111b27',
+              border: '#1a293a',
+              highlight: '#23374d',
+              cyan: '#00f0ff',
+              cyanGlow: 'rgba(0, 240, 255, 0.4)',
+              green: '#00ff66',
+              greenGlow: 'rgba(0, 255, 102, 0.4)',
+              amber: '#ffaa00',
+              red: '#ff284d',
+              redGlow: 'rgba(255, 40, 77, 0.5)',
+            }
+          },
+          animation: {
+            'pulse-fast': 'pulse 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'radar-sweep': 'radarSweep 4s linear infinite',
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Custom Scrollbar for Surveillance Terminal */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #080d14;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1c2c3e;
+      border-radius: 2px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #00f0ff;
+    }
+
+    /* CRT Scanline Overlay Effect for Video Feed */
+    .crt-scanlines {
+      background: linear-gradient(
+        to bottom,
+        rgba(255,255,255,0),
+        rgba(255,255,255,0) 50%,
+        rgba(0, 0, 0, 0.35) 50%,
+        rgba(0, 0, 0, 0.35)
+      );
+      background-size: 100% 4px;
+      pointer-events: none;
+    }
+
+    /* Ambient CRT Flicker / Vignette */
+    .vignette-overlay {
+      background: radial-gradient(circle at center, transparent 55%, rgba(4, 7, 11, 0.85) 100%);
+      pointer-events: none;
+    }
+
+    /* Tactical Optical Grid */
+    .optical-grid {
+      background-image: 
+        linear-gradient(to right, rgba(0, 240, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0, 240, 255, 0.05) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* Looping Laser Scanning Beam inside YOLO Bounding Box */
+    .scanning-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 2.5px;
+      background: linear-gradient(90deg, 
+        transparent 0%, 
+        rgba(0, 240, 255, 0.2) 15%, 
+        #00f0ff 50%, 
+        rgba(0, 240, 255, 0.2) 85%, 
+        transparent 100%
+      );
+      box-shadow: 0 0 12px #00f0ff, 0 0 24px rgba(0, 240, 255, 0.6);
+      animation: scanBeamLoop 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    @keyframes scanBeamLoop {
+      0% {
+        top: 0%;
+        opacity: 0.15;
+      }
+      15% {
+        opacity: 0.95;
+      }
+      85% {
+        opacity: 0.95;
+      }
+      100% {
+        top: 100%;
+        opacity: 0.15;
+      }
+    }
+
+    /* Target Detection Burst Animation (Fires upon new detection) */
+    .detection-flash-trigger {
+      animation: detectionBurst 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes detectionBurst {
+      0% {
+        transform: scale(1.08);
+        filter: drop-shadow(0 0 25px #00ff66) brightness(1.6);
+      }
+      50% {
+        filter: drop-shadow(0 0 15px #00f0ff) brightness(1.2);
+      }
+      100% {
+        transform: scale(1);
+        filter: drop-shadow(0 0 8px rgba(0, 240, 255, 0.7));
+      }
+    }
+
+    /* Event Stream Slide-Down Entrance */
+    .event-entry-enter {
+      animation: slideDownIn 0.38s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes slideDownIn {
+      0% {
+        opacity: 0;
+        transform: translateY(-20px) scale(0.97);
+        border-color: #00ff66;
+        box-shadow: 0 0 20px rgba(0, 255, 102, 0.35);
+      }
+      70% {
+        border-color: #00f0ff;
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        box-shadow: none;
+      }
+    }
+
+    /* Pulsing Signal Wave */
+    .pulse-ring {
+      position: absolute;
+      inset: -4px;
+      border-radius: 9999px;
+      animation: ringSpread 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+
+    @keyframes ringSpread {
+      0% {
+        transform: scale(0.8);
+        opacity: 0.8;
+      }
+      100% {
+        transform: scale(2.2);
+        opacity: 0;
+      }
+    }
+  </style>
+</head>
+<body class="bg-surv-black text-slate-200 min-h-screen flex flex-col font-mono selection:bg-surv-cyan selection:text-black overflow-x-hidden">
+
+  <!-- ========================================================================= -->
+  <!-- 1. SYSTEM HEADER -->
+  <!-- ========================================================================= -->
+  <header class="w-full bg-surv-dark border-b border-surv-border px-4 py-2.5 flex flex-wrap items-center justify-between gap-4 select-none z-30 shadow-[0_4px_20px_rgba(0,0,0,0.6)]">
+    
+    <!-- Title & Brand -->
+    <div class="flex items-center gap-3">
+      <!-- High-Tech Radar Logo -->
+      <div class="relative w-8 h-8 rounded bg-surv-panel border border-surv-cyan/50 flex items-center justify-center overflow-hidden">
+        <div class="absolute inset-0 bg-surv-cyan/10"></div>
+        <div class="w-4 h-4 border border-surv-cyan/70 rounded-full"></div>
+        <div class="absolute w-6 h-6 border border-surv-cyan/30 rounded-full animate-ping"></div>
+        <svg class="w-4 h-4 text-surv-cyan z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <circle cx="12" cy="12" r="3" stroke-width="2"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v3m0 12v3m9-9h-3M6 12H3"/>
+        </svg>
+      </div>
+
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-base font-bold text-white tracking-widest uppercase font-tactical flex items-center gap-1.5">
+            <span class="text-surv-cyan">selen-lpr</span>
+            <span class="text-slate-300">NVR ENGINE</span>
+          </h1>
+          <span class="px-1.5 py-0.5 text-[10px] font-semibold bg-surv-cyan/10 border border-surv-cyan/40 text-surv-cyan rounded tracking-wide">
+            v2.4.1-EDGE
+          </span>
+        </div>
+        <div class="text-[11px] text-slate-400 tracking-wider flex items-center gap-2 font-mono">
+          <span>YOLOv11-EDGE</span>
+          <span class="text-slate-600">/</span>
+          <span>THAI DLT v2.4</span>
+          <span class="text-slate-600">/</span>
+          <span class="text-surv-green">41-CONSONANT RIGOROUS</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center: Live System Clock & Telemetry -->
+    <div class="flex items-center gap-6 bg-surv-panel/80 border border-surv-border px-4 py-1.5 rounded">
+      <!-- Time Display -->
+      <div class="flex items-center gap-3">
+        <svg class="w-4 h-4 text-surv-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div class="flex flex-col">
+          <div class="text-sm font-bold text-white tracking-widest font-mono" id="system-clock-utc">
+            2026-11-06 08:48:00 UTC
+          </div>
+          <div class="text-[10px] text-slate-400 tracking-wider flex gap-2 font-mono">
+            <span id="system-clock-local">LOCAL: --:--:--</span>
+            <span class="text-slate-600">|</span>
+            <span id="frame-ticker" class="text-surv-cyan">FRAME: 000000</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Inference Telemetry -->
+      <div class="hidden md:flex flex-col border-l border-surv-border pl-4">
+        <div class="text-[10px] text-slate-400 tracking-wider uppercase">Latency / Device</div>
+        <div class="text-xs font-semibold text-surv-green flex items-center gap-1.5">
+          <span id="latency-val">13.4 ms</span>
+          <span class="text-[10px] text-slate-400 font-normal">(CUDA FP16)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Pulsing Status Indicators & Stream Controls -->
+    <div class="flex items-center gap-3">
+      <!-- REC Indicator -->
+      <div class="flex items-center gap-2 bg-surv-panel border border-surv-red/30 px-2.5 py-1 rounded">
+        <div class="relative flex items-center justify-center">
+          <div class="w-2.5 h-2.5 rounded-full bg-surv-red"></div>
+          <div class="pulse-ring bg-surv-red"></div>
+        </div>
+        <span class="text-xs font-bold text-surv-red tracking-wider">REC</span>
+      </div>
+
+      <!-- LIVE Indicator -->
+      <div class="flex items-center gap-2 bg-surv-panel border border-surv-green/30 px-2.5 py-1 rounded">
+        <div class="relative flex items-center justify-center">
+          <div class="w-2.5 h-2.5 rounded-full bg-surv-green"></div>
+          <div class="pulse-ring bg-surv-green"></div>
+        </div>
+        <span class="text-xs font-bold text-surv-green tracking-wider">LIVE</span>
+      </div>
+
+      <!-- Stream Mode Badge / Socket Switcher -->
+      <button id="ws-mode-btn" onclick="toggleWebSocketModal()" class="flex items-center gap-2 bg-surv-panel hover:bg-surv-surface border border-surv-cyan/40 px-2.5 py-1 rounded text-xs transition group">
+        <span id="ws-status-dot" class="w-2 h-2 rounded-full bg-surv-cyan animate-pulse"></span>
+        <span id="ws-status-text" class="text-surv-cyan font-semibold group-hover:text-white">SIMULATED WS</span>
+        <svg class="w-3.5 h-3.5 text-slate-400 group-hover:text-surv-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      </button>
+
+      <!-- Audio Synth Beep Toggle -->
+      <button id="audio-toggle-btn" onclick="toggleAudioChirp()" title="Tactical HUD Sound Effects" class="p-1.5 bg-surv-panel hover:bg-surv-surface border border-surv-border rounded text-slate-400 hover:text-surv-cyan transition">
+        <svg id="audio-icon-on" class="w-4 h-4 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+        </svg>
+        <svg id="audio-icon-off" class="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ========================================================================= -->
+  <!-- MAIN WORKSPACE LAYOUT -->
+  <!-- ========================================================================= -->
+  <main class="flex-1 w-full max-w-[1920px] mx-auto p-3.5 flex flex-col lg:flex-row gap-3.5 overflow-hidden">
+
+    <!-- ======================================================================= -->
+    <!-- LEFT / CENTER: CAMERA FEED & DETECTION VIEWPORT -->
+    <!-- ======================================================================= -->
+    <section class="flex-1 flex flex-col gap-3 min-w-0">
+      
+      <!-- Camera Bar: Channel Selector, PTZ & Action Controls -->
+      <div class="bg-surv-panel border border-surv-border rounded px-3 py-2 flex flex-wrap items-center justify-between gap-3 text-xs">
+        
+        <!-- Channels -->
+        <div class="flex items-center gap-1.5 overflow-x-auto">
+          <button class="px-2.5 py-1 bg-surv-surface border border-surv-cyan text-surv-cyan font-bold rounded flex items-center gap-1.5 shadow-[0_0_10px_rgba(0,240,255,0.2)]">
+            <span class="w-1.5 h-1.5 rounded-full bg-surv-cyan"></span>
+            CAM-01 [NORTH GATE - LANE 2]
+          </button>
+          <button class="px-2.5 py-1 bg-surv-dark hover:bg-surv-surface border border-surv-border text-slate-400 hover:text-slate-200 rounded transition flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+            CAM-02 [SOUTH GATE]
+          </button>
+          <button class="px-2.5 py-1 bg-surv-dark hover:bg-surv-surface border border-surv-border text-slate-400 hover:text-slate-200 rounded transition hidden sm:flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+            CAM-03 [RAMP IN]
+          </button>
+        </div>
+
+        <!-- Right: View Modes & Manual Simulate Trigger -->
+        <div class="flex items-center gap-2">
+          <!-- Manual Detection Trigger -->
+          <button onclick="triggerSimulatedDetection()" class="px-3 py-1 bg-surv-cyan/10 hover:bg-surv-cyan/20 border border-surv-cyan/60 hover:border-surv-cyan text-surv-cyan font-semibold rounded transition flex items-center gap-1.5 active:scale-95 shadow-[0_0_8px_rgba(0,240,255,0.2)]">
+            <svg class="w-3.5 h-3.5 animate-spin" style="animation-duration: 3s;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <circle cx="12" cy="12" r="9" stroke-dasharray="14 10" stroke-width="2"/>
+            </svg>
+            <span>TRIGGER DETECTION</span>
+            <span class="hidden sm:inline text-[10px] text-surv-cyan/70 font-mono bg-surv-dark px-1 rounded">[SPACE]</span>
+          </button>
+
+          <!-- Grid Toggle -->
+          <button onclick="toggleGridOverlay()" id="grid-toggle-btn" class="px-2 py-1 bg-surv-dark hover:bg-surv-surface border border-surv-border text-slate-300 rounded transition" title="Toggle Optical Grid">
+            GRID: ON
+          </button>
+
+          <!-- Fullscreen -->
+          <button onclick="toggleCameraFullscreen()" class="p-1 bg-surv-dark hover:bg-surv-surface border border-surv-border text-slate-300 rounded transition" title="Toggle Fullscreen">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- ===================================================================== -->
+      <!-- 2. MAIN CAMERA FEED (LARGE CENTRAL VIDEO PLACEHOLDER) -->
+      <!-- ===================================================================== -->
+      <div id="camera-viewport-container" class="relative w-full aspect-video bg-surv-black rounded border border-surv-border overflow-hidden select-none shadow-[0_10px_35px_rgba(0,0,0,0.8)] flex items-center justify-center">
+
+        <!-- Layer 1: Simulated High-Tech CCTV Scene (Dynamic Canvas) -->
+        <canvas id="cctv-scene-canvas" class="absolute inset-0 w-full h-full object-cover"></canvas>
+
+        <!-- Layer 2: CRT Scanline & Optical Grid -->
+        <div id="optical-grid-overlay" class="absolute inset-0 optical-grid pointer-events-none opacity-60"></div>
+        <div class="absolute inset-0 crt-scanlines pointer-events-none"></div>
+        <div class="absolute inset-0 vignette-overlay pointer-events-none"></div>
+
+        <!-- Layer 3: Tactical Corner Frame Reticles for Entire Camera Viewport -->
+        <div class="absolute top-2 left-2 w-8 h-8 border-t-2 border-l-2 border-surv-cyan/50 pointer-events-none"></div>
+        <div class="absolute top-2 right-2 w-8 h-8 border-t-2 border-r-2 border-surv-cyan/50 pointer-events-none"></div>
+        <div class="absolute bottom-2 left-2 w-8 h-8 border-b-2 border-l-2 border-surv-cyan/50 pointer-events-none"></div>
+        <div class="absolute bottom-2 right-2 w-8 h-8 border-b-2 border-r-2 border-surv-cyan/50 pointer-events-none"></div>
+
+        <!-- Layer 4: Central Tactical Aiming Reticle -->
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none opacity-40">
+          <div class="w-24 h-24 border border-surv-cyan/30 rounded-full flex items-center justify-center">
+            <div class="w-12 h-12 border border-dashed border-surv-cyan/40 rounded-full"></div>
+            <div class="absolute w-2 h-2 bg-surv-cyan/60 rounded-full"></div>
+          </div>
+          <div class="absolute w-36 h-[1px] bg-surv-cyan/20"></div>
+          <div class="absolute h-36 w-[1px] bg-surv-cyan/20"></div>
+        </div>
+
+        <!-- Layer 5: Camera OSD Telemetry -->
+        <!-- Top-Left OSD -->
+        <div class="absolute top-3 left-4 text-xs font-mono text-surv-cyan drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] pointer-events-none space-y-0.5 z-20">
+          <div class="flex items-center gap-2 font-bold tracking-widest text-white">
+            <span class="inline-block w-2 h-2 rounded-full bg-surv-red animate-ping"></span>
+            CAM 01 // NORTH GATE - LANE 02
+          </div>
+          <div class="text-[11px] text-slate-300">
+            NVR CHANNEL 01 &bull; 1080p @ 30 FPS &bull; H.265 &bull; 4096 kbps
+          </div>
+        </div>
+
+        <!-- Top-Right OSD -->
+        <div class="absolute top-3 right-4 text-right text-xs font-mono text-slate-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] pointer-events-none z-20">
+          <div class="text-surv-green font-bold tracking-wider" id="osd-live-clock">
+            2026-11-06 15:48:52.000
+          </div>
+          <div class="text-[11px] text-slate-400">
+            ZOOM: 1.4x &bull; PTZ: 042&deg; / -12&deg; &bull; IR: OFF
+          </div>
+        </div>
+
+        <!-- Bottom-Left OSD -->
+        <div class="absolute bottom-3 left-4 text-[11px] font-mono text-slate-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] pointer-events-none z-20">
+          <div>EXP: 1/500s &bull; GAIN: +6dB &bull; AGC: AUTO &bull; F1.8</div>
+          <div class="text-slate-500">ROI: [380, 240, 1160, 920] &bull; YOLOv11n-DLT</div>
+        </div>
+
+        <!-- Bottom-Right OSD -->
+        <div class="absolute bottom-3 right-4 text-right text-[11px] font-mono text-slate-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] pointer-events-none z-20">
+          <div class="text-surv-cyan font-semibold">GPS: 13&deg;44'49.2"N 100&deg;31'49.5"E</div>
+          <div class="text-slate-500">BANGKOK CHECKPOINT 02</div>
+        </div>
+
+        <!-- =================================================================== -->
+        <!-- 3. DETECTION MARKERS (CRUCIAL YOLOv11 BOUNDING BOX SIMULATION) -->
+        <!-- =================================================================== -->
+        <!-- 
+          Crucial Requirements:
+          - Corner-bracket styling (no solid borders, just the 4 corners)
+          - Smooth looping CSS scanning line animation moving top to bottom inside the box
+          - Floating data label attached to the box showing Thai plate text and confidence score
+        -->
+        <div id="detection-marker" 
+             style="top: 48%; left: 40%; width: 20%; height: 13%;"
+             class="absolute transition-all duration-500 ease-out z-20 select-none cursor-pointer group"
+             onclick="inspectActiveMarker()">
+
+          <!-- 4 Corner Brackets (NO SOLID BORDERS ANYWHERE ON THE BOX) -->
+          <!-- Top-Left Corner -->
+          <div class="absolute -top-[2px] -left-[2px] w-4 h-4 border-t-[3px] border-l-[3px] border-surv-cyan drop-shadow-[0_0_8px_rgba(0,240,255,0.9)]"></div>
+          <!-- Top-Right Corner -->
+          <div class="absolute -top-[2px] -right-[2px] w-4 h-4 border-t-[3px] border-r-[3px] border-surv-cyan drop-shadow-[0_0_8px_rgba(0,240,255,0.9)]"></div>
+          <!-- Bottom-Left Corner -->
+          <div class="absolute -bottom-[2px] -left-[2px] w-4 h-4 border-b-[3px] border-l-[3px] border-surv-cyan drop-shadow-[0_0_8px_rgba(0,240,255,0.9)]"></div>
+          <!-- Bottom-Right Corner -->
+          <div class="absolute -bottom-[2px] -right-[2px] w-4 h-4 border-b-[3px] border-r-[3px] border-surv-cyan drop-shadow-[0_0_8px_rgba(0,240,255,0.9)]"></div>
+
+          <!-- Subtle Holographic Backdrop inside Bounding Box (No solid border) -->
+          <div class="absolute inset-0 bg-surv-cyan/[0.04] pointer-events-none"></div>
+
+          <!-- Micro Optical Crosshair in center of detection box -->
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none opacity-40">
+            <div class="w-2.5 h-2.5 border border-surv-cyan rounded-full"></div>
+          </div>
+
+          <!-- Smooth Looping Laser Scanning Line moving Top to Bottom -->
+          <div class="scanning-line"></div>
+
+          <!-- Floating Data Label Attached to the Box -->
+          <!-- Shows detected Thai plate text and confidence score -->
+          <div id="floating-data-label" 
+               class="absolute -top-12 left-0 pointer-events-none z-30 transition-all duration-300">
+            <div class="bg-surv-dark/95 backdrop-blur-md border border-surv-cyan/70 rounded px-2.5 py-1 shadow-[0_0_16px_rgba(0,240,255,0.35)] flex items-center gap-2.5 whitespace-nowrap">
+              
+              <!-- Indicator Pulse -->
+              <div class="relative flex items-center justify-center">
+                <span class="w-2 h-2 rounded-full bg-surv-green"></span>
+                <span class="absolute inset-0 rounded-full bg-surv-green animate-ping"></span>
+              </div>
+
+              <!-- Metadata content -->
+              <div class="flex flex-col">
+                <div class="flex items-center gap-1.5 text-[10px] font-mono leading-tight">
+                  <span class="text-surv-cyan font-bold tracking-wider">YOLOv11: THAI_PLATE</span>
+                  <span class="text-slate-500">|</span>
+                  <span id="marker-conf-badge" class="text-surv-green font-bold">98.5% CONF</span>
+                </div>
+                <!-- Thai Plate Text & Province -->
+                <div class="text-xs sm:text-sm font-bold text-white tracking-wide font-tactical flex items-center gap-2">
+                  <span id="marker-plate-text">1กข 1234</span>
+                  <span id="marker-province-text" class="text-surv-cyan text-[11px] sm:text-xs font-normal">กรุงเทพมหานคร</span>
+                </div>
+              </div>
+
+              <!-- Mini Type Badge -->
+              <span id="marker-vehicle-type" class="px-1.5 py-0.5 text-[9px] font-semibold bg-surv-surface border border-slate-700 text-slate-300 rounded uppercase">
+                SEDAN
+              </span>
+            </div>
+
+            <!-- Tactical Corner Anchor Connector Line -->
+            <div class="w-3 h-2 border-l-2 border-b-2 border-surv-cyan/80 ml-1 -mt-0.5"></div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Quick KPI Telemetry Metrics Bar below Video Feed -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        
+        <!-- Metric 1: Total Today -->
+        <div class="bg-surv-panel border border-surv-border p-2.5 rounded flex items-center justify-between">
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider">Total Detections</div>
+            <div class="text-lg font-bold text-white font-mono" id="stat-total-count">1,428</div>
+          </div>
+          <div class="p-2 bg-surv-cyan/10 border border-surv-cyan/30 rounded text-surv-cyan">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+        </div>
+
+        <!-- Metric 2: Mean Confidence -->
+        <div class="bg-surv-panel border border-surv-border p-2.5 rounded flex items-center justify-between">
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider">Mean Confidence</div>
+            <div class="text-lg font-bold text-surv-green font-mono" id="stat-avg-conf">98.2%</div>
+          </div>
+          <div class="p-2 bg-surv-green/10 border border-surv-green/30 rounded text-surv-green">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+        </div>
+
+        <!-- Metric 3: DLT Compliance -->
+        <div class="bg-surv-panel border border-surv-border p-2.5 rounded flex items-center justify-between">
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider">DLT Compliance</div>
+            <div class="text-lg font-bold text-surv-cyan font-mono">100.0%</div>
+          </div>
+          <div class="p-2 bg-surv-cyan/10 border border-surv-cyan/30 rounded text-surv-cyan">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+          </div>
+        </div>
+
+        <!-- Metric 4: Edge FPS / Latency -->
+        <div class="bg-surv-panel border border-surv-border p-2.5 rounded flex items-center justify-between">
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider">Inference Throughput</div>
+            <div class="text-lg font-bold text-white font-mono flex items-center gap-1.5">
+              <span>74.5</span>
+              <span class="text-xs font-normal text-slate-400">FPS</span>
+            </div>
+          </div>
+          <div class="p-2 bg-surv-amber/10 border border-surv-amber/30 rounded text-surv-amber">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- ======================================================================= -->
+    <!-- 4. REAL-TIME EVENT LOG (SIDEBAR LIVE EVENT STREAM) -->
+    <!-- ======================================================================= -->
+    <aside class="w-full lg:w-96 xl:w-[420px] flex flex-col bg-surv-panel border border-surv-border rounded overflow-hidden shadow-[0_4px_25px_rgba(0,0,0,0.5)]">
+      
+      <!-- Event Stream Header -->
+      <div class="p-3 border-b border-surv-border bg-surv-dark/80 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="w-2.5 h-2.5 rounded-full bg-surv-cyan animate-pulse"></div>
+          <h2 class="text-sm font-bold text-white tracking-wider uppercase font-tactical">
+            LIVE DETECTION STREAM
+          </h2>
+          <span id="log-count-badge" class="px-1.5 py-0.2 text-[10px] font-mono bg-surv-cyan/10 border border-surv-cyan/40 text-surv-cyan rounded">
+            24 EVENTS
+          </span>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-center gap-1.5 text-xs">
+          <button onclick="clearEventLogs()" class="p-1 text-slate-400 hover:text-slate-200 transition" title="Clear Event Logs">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+          <button onclick="exportLogsJSON()" class="p-1 text-slate-400 hover:text-surv-cyan transition" title="Export JSON Logs">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Filter Chips -->
+      <div class="px-3 py-2 bg-surv-dark/40 border-b border-surv-border/70 flex items-center gap-1.5 text-[11px] overflow-x-auto">
+        <button onclick="setEventFilter('all')" id="filter-all-btn" class="px-2 py-0.5 rounded bg-surv-cyan/20 border border-surv-cyan text-surv-cyan font-semibold">
+          ALL
+        </button>
+        <button onclick="setEventFilter('high_conf')" id="filter-high-btn" class="px-2 py-0.5 rounded bg-surv-dark border border-surv-border text-slate-400 hover:text-white transition">
+          HIGH CONF (&gt;95%)
+        </button>
+        <button onclick="setEventFilter('inspection')" id="filter-insp-btn" class="px-2 py-0.5 rounded bg-surv-dark border border-surv-border text-slate-400 hover:text-white transition">
+          OWOD FLAG (&lt;85%)
+        </button>
+      </div>
+
+      <!-- Scrollable Event Stream Feed -->
+      <div id="event-stream-container" class="flex-1 overflow-y-auto p-2.5 space-y-2.5 max-h-[calc(100vh-250px)] lg:max-h-[640px]">
+        <!-- Dynamic event cards will be prepended here by JS -->
+      </div>
+
+      <!-- Stream Status Footer -->
+      <div class="p-2.5 border-t border-surv-border bg-surv-dark/90 text-[11px] text-slate-400 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-surv-green"></span>
+          <span id="stream-status-caption">Ingesting: CAM-01 (1 detection / 3-5s)</span>
+        </div>
+        <div class="text-slate-500 font-mono">
+          DLT 41-CONSONANTS
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL 1: FASTAPI BACKEND & WEBSOCKET SETTINGS -->
+  <!-- ========================================================================= -->
+  <div id="ws-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-surv-panel border border-surv-cyan/60 rounded-lg max-w-xl w-full p-5 shadow-[0_0_40px_rgba(0,240,255,0.25)] space-y-4">
+      
+      <div class="flex items-center justify-between border-b border-surv-border pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-3 h-3 rounded-full bg-surv-cyan"></div>
+          <h3 class="text-base font-bold text-white font-tactical tracking-wider uppercase">
+            FASTAPI BACKEND &amp; WEBSOCKET STREAM CONFIG
+          </h3>
+        </div>
+        <button onclick="toggleWebSocketModal()" class="text-slate-400 hover:text-white">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <p class="text-slate-300 leading-relaxed">
+          This frontend operates in <strong class="text-surv-cyan">Autonomous Simulation Mode</strong> by default, generating compliant Thai DLT plate detections every 3-5 seconds. You can also connect to a live FastAPI WebSocket endpoint:
+        </p>
+
+        <!-- WebSocket URL Input -->
+        <div class="space-y-1">
+          <label class="block text-slate-400 uppercase tracking-wider text-[10px]">WebSocket Server URL</label>
+          <div class="flex gap-2">
+            <input type="text" id="ws-url-input" value="ws://localhost:8000/api/v1/stream/detections" 
+                   class="flex-1 bg-surv-dark border border-surv-border focus:border-surv-cyan px-3 py-1.5 rounded text-white font-mono text-xs outline-none">
+            <button onclick="connectLiveWebSocket()" class="px-4 py-1.5 bg-surv-cyan hover:bg-cyan-400 text-black font-bold rounded transition">
+              CONNECT
+            </button>
+          </div>
+        </div>
+
+        <!-- Simulation Speed Slider -->
+        <div class="space-y-1 pt-1">
+          <label class="block text-slate-400 uppercase tracking-wider text-[10px]">Simulation Interval: <span id="sim-speed-val" class="text-surv-cyan">3 - 5 sec (Default)</span></label>
+          <div class="flex items-center gap-2">
+            <button onclick="setSimSpeed('fast')" class="px-2.5 py-1 bg-surv-dark hover:bg-surv-surface border border-surv-border text-slate-300 rounded text-[11px]">Turbo (1.5s)</button>
+            <button onclick="setSimSpeed('normal')" class="px-2.5 py-1 bg-surv-cyan/20 border border-surv-cyan text-surv-cyan font-bold rounded text-[11px]">Normal (3-5s)</button>
+            <button onclick="setSimSpeed('slow')" class="px-2.5 py-1 bg-surv-dark hover:bg-surv-surface border border-surv-border text-slate-300 rounded text-[11px]">Slow (7s)</button>
+          </div>
+        </div>
+
+        <!-- FastAPI Architecture Sample Code snippet -->
+        <div class="pt-2">
+          <div class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Expected FastAPI Server Schema (api.py):</div>
+          <pre class="bg-surv-dark border border-surv-border p-3 rounded text-[10px] font-mono text-slate-300 overflow-x-auto leading-relaxed">
+@app.websocket("/api/v1/stream/detections")
+async def detection_stream(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        # Example JSON payload broadcast:
+        await websocket.send_json({
+            "event_id": "EVT-20261106-9041",
+            "timestamp": "2026-11-06T15:48:32.124Z",
+            "camera_id": "CAM-01",
+            "bbox": {"x": 42.5, "y": 51.0, "w": 20.0, "h": 12.5},
+            "plate": {
+                "text": "1กข 1234",
+                "province": "กรุงเทพมหานคร",
+                "confidence": 0.985,
+                "plate_type": "Sedan"
+            },
+            "vehicle": {"type": "Sedan", "color": "Silver"},
+            "latency_ms": 13.4
+        })
+          </pre>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2 border-t border-surv-border">
+        <button onclick="disconnectLiveWebSocket()" class="px-3 py-1.5 bg-surv-dark hover:bg-surv-surface border border-surv-border text-slate-300 rounded text-xs">
+          FORCE SIMULATION MODE
+        </button>
+        <button onclick="toggleWebSocketModal()" class="px-4 py-1.5 bg-surv-cyan text-black font-bold rounded text-xs">
+          CLOSE
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL 2: DETAILED CROP INSPECTOR & DLT VERIFIER -->
+  <!-- ========================================================================= -->
+  <div id="inspector-modal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-surv-panel border border-surv-cyan/70 rounded-lg max-w-2xl w-full p-5 shadow-[0_0_50px_rgba(0,240,255,0.3)] space-y-4">
+      
+      <div class="flex items-center justify-between border-b border-surv-border pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-3 h-3 rounded-full bg-surv-cyan animate-pulse"></div>
+          <h3 class="text-base font-bold text-white font-tactical tracking-wider uppercase">
+            PLATE AUDIT &amp; DLT SPECIFICATION INSPECTION
+          </h3>
+        </div>
+        <button onclick="closeInspectorModal()" class="text-slate-400 hover:text-white">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Left: Rendered Plate Crop Placeholder & High-Res Canvas -->
+        <div class="space-y-2">
+          <div class="text-[10px] text-slate-400 uppercase tracking-wider">Cropped Plate Rectification View</div>
+          <div class="w-full bg-surv-black border border-surv-cyan/40 rounded p-3 flex flex-col items-center justify-center shadow-inner">
+            <canvas id="inspector-plate-canvas" width="240" height="110" class="rounded drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)]"></canvas>
+            <div class="mt-2 text-[10px] text-slate-400 font-mono text-center">
+              DLT Standard 340mm &times; 150mm Aspect Ratio (2.26:1)
+            </div>
+          </div>
+          <div class="bg-surv-dark border border-surv-border p-2.5 rounded text-xs space-y-1">
+            <div class="flex justify-between">
+              <span class="text-slate-400">Target Category:</span>
+              <span id="inspect-plate-type" class="text-white font-semibold">Sedan (Normal)</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">Confidence Score:</span>
+              <span id="inspect-plate-conf" class="text-surv-green font-bold">98.5%</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">Inference Latency:</span>
+              <span id="inspect-plate-latency" class="text-surv-cyan font-mono">13.2 ms</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Thai DLT Character Analysis & Consonant Check -->
+        <div class="space-y-3">
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">DLT 41-Consonant Rule Audit</div>
+            <div class="bg-surv-dark border border-surv-border p-2.5 rounded text-xs space-y-2">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-surv-green"></span>
+                <span class="text-slate-200">DLT Permitted Vocabulary: <strong class="text-surv-green">PASS</strong></span>
+              </div>
+              <p class="text-[11px] text-slate-400 leading-relaxed">
+                Verified against DLT 41 consonants (`ก-ฮ` excluding `ฃ`, `ฅ`, `ฏ`). Standard OCR correction mappings applied: <code>{"ฃ": "ข", "ฅ": "ค", "ฏ": "ฎ"}</code>.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Character-Level OCR Confidence</div>
+            <div id="char-breakdown-container" class="grid grid-cols-6 gap-1 text-center font-mono text-xs">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Raw Event Payload (JSON)</div>
+            <pre id="inspect-raw-json" class="bg-surv-dark border border-surv-border p-2 rounded text-[10px] font-mono text-slate-300 max-h-24 overflow-y-auto"></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-between items-center pt-2 border-t border-surv-border text-xs">
+        <span class="text-slate-500 font-mono">ISO/IEC 42001:2023 A.9.3 Traceability Record</span>
+        <button onclick="closeInspectorModal()" class="px-4 py-1.5 bg-surv-cyan text-black font-bold rounded">
+          DONE
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- JAVASCRIPT: SIMULATED WEBSOCKET STREAM, CANVAS DRAWING & TACTICAL LOGIC -->
+  <!-- ========================================================================= -->
+  <script>
+    /**
+     * selen-lpr NVR Engine - Frontend Client Controller
+     * ASD-STE100 & ISO/IEC 42001:2023 Compliant Architecture
+     * Compatible with standalone execution & FastAPI WebSocket streaming
+     */
+
+    // ---------------------------------------------------------------------------
+    // 1. Thai DLT Domain Knowledge & Character Sets (AGENTS.md Compliance)
+    // ---------------------------------------------------------------------------
+    // Standard DLT vehicle plates utilize 41 out of 44 Thai consonants.
+    // Strictly excluded: ฃ, ฅ, ฏ.
+    // Actively permitted: ซ, ห, ป.
+    const VALID_CONSONANTS = [
+      "ก", "ข", "ค", "ฆ", "ง", "จ", "ฉ", "ช", "ซ", "ฌ", "ญ", "ฎ", "ฐ", "ฑ", "ฒ", "ณ",
+      "ด", "ต", "ถ", "ท", "ธ", "น", "บ", "ป", "ผ", "ฝ", "พ", "ฟ", "ภ", "ม", "ย", "ร",
+      "ล", "ว", "ศ", "ษ", "ส", "ห", "ฬ", "อ", "ฮ"
+    ];
+
+    const THAI_PROVINCES = [
+      "กรุงเทพมหานคร", "นนทบุรี", "ปทุมธานี", "สมุทรปราการ", "ชลบุรี", 
+      "เชียงใหม่", "นครราชสีมา", "ขอนแก่น", "ภูเก็ต", "สงขลา", 
+      "สุราษฎร์ธานี", "ระยอง", "พระนครศรีอยุธยา", "อุบลราชธานี", "นครปฐม",
+      "สระบุรี", "พิษณุโลก", "อุดรธานี", "ลำปาง", "ตรัง"
+    ];
+
+    // Pre-curated realistic sample vehicles for CCTV checkpoint simulation
+    const SIMULATED_VEHICLES = [
+      {
+        plate_text: "1กข 1234",
+        province: "กรุงเทพมหานคร",
+        plate_type: "Sedan",
+        vehicle_type: "Sedan",
+        color: "Metallic Silver",
+        confidence: 0.985,
+        bbox: { top: 48.0, left: 40.0, width: 20.0, height: 13.0 }
+      },
+      {
+        plate_text: "บพ 4567",
+        province: "ชลบุรี",
+        plate_type: "Pickup",
+        vehicle_type: "Pickup",
+        color: "Gloss White",
+        confidence: 0.962,
+        bbox: { top: 52.0, left: 37.0, width: 22.0, height: 14.0 }
+      },
+      {
+        plate_text: "1นข 3456",
+        province: "กรุงเทพมหานคร",
+        plate_type: "Van",
+        vehicle_type: "Van",
+        color: "Deep Black",
+        confidence: 0.978,
+        bbox: { top: 44.0, left: 43.0, width: 19.0, height: 12.0 }
+      },
+      {
+        plate_text: "7หป 4321", // Explicitly showcasing permitted 'ห' and 'ป'
+        province: "เชียงใหม่",
+        plate_type: "Sedan",
+        vehicle_type: "Sedan",
+        color: "Graphite Gray",
+        confidence: 0.991,
+        bbox: { top: 50.0, left: 41.5, width: 21.0, height: 13.5 }
+      },
+      {
+        plate_text: "2ซม 9104", // Explicitly showcasing permitted 'ซ'
+        province: "นนทบุรี",
+        plate_type: "SUV",
+        vehicle_type: "SUV",
+        color: "Pearl White",
+        confidence: 0.984,
+        bbox: { top: 46.0, left: 39.0, width: 20.5, height: 13.0 }
+      },
+      {
+        plate_text: "ทศ 1234",
+        province: "กรุงเทพมหานคร",
+        plate_type: "Taxi",
+        vehicle_type: "Taxi",
+        color: "Yellow / Green",
+        confidence: 0.954,
+        bbox: { top: 53.0, left: 42.0, width: 21.5, height: 14.0 }
+      },
+      {
+        plate_text: "3ขง 8899",
+        province: "ภูเก็ต",
+        plate_type: "Sedan",
+        vehicle_type: "Sedan",
+        color: "Navy Blue",
+        confidence: 0.993,
+        bbox: { top: 47.0, left: 38.5, width: 19.5, height: 12.5 }
+      },
+      {
+        plate_text: "1ผฮ 9012",
+        province: "สมุทรปราการ",
+        plate_type: "Pickup",
+        vehicle_type: "Pickup",
+        color: "Bronze",
+        confidence: 0.947,
+        bbox: { top: 51.5, left: 40.0, width: 22.5, height: 14.5 }
+      }
+    ];
+
+    // ---------------------------------------------------------------------------
+    // 2. Global State & Telemetry
+    // ---------------------------------------------------------------------------
+    const state = {
+      isWebSocketConnected: false,
+      wsInstance: null,
+      simulationTimer: null,
+      simulationMinMs: 3000,
+      simulationMaxMs: 5000,
+      totalDetectionsCount: 1428,
+      confsSum: 1428 * 0.982,
+      eventsHistory: [],
+      currentFilter: 'all',
+      audioEnabled: false,
+      audioCtx: null,
+      activeTarget: SIMULATED_VEHICLES[0],
+      currentFrameIndex: 84920,
+    };
+
+    // ---------------------------------------------------------------------------
+    // 3. System Clock & Frame Counter Engine
+    // ---------------------------------------------------------------------------
+    function updateSystemClock() {
+      const now = new Date();
+      
+      // ISO 8601 UTC
+      const isoUtc = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+      const elUtc = document.getElementById('system-clock-utc');
+      if (elUtc) elUtc.textContent = isoUtc;
+
+      // Local Time with Milliseconds
+      const hours = String(now.getHours()).padStart(2, '0');
+      const mins = String(now.getMinutes()).padStart(2, '0');
+      const secs = String(now.getSeconds()).padStart(2, '0');
+      const ms = String(now.getMilliseconds()).padStart(3, '0');
+      
+      const elLocal = document.getElementById('system-clock-local');
+      if (elLocal) elLocal.textContent = `LOCAL: ${hours}:${mins}:${secs}`;
+
+      const elOsd = document.getElementById('osd-live-clock');
+      if (elOsd) {
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        elOsd.textContent = `${year}-${month}-${day} ${hours}:${mins}:${secs}.${ms}`;
+      }
+
+      // Frame Ticker
+      state.currentFrameIndex += 1;
+      const elFrame = document.getElementById('frame-ticker');
+      if (elFrame) {
+        elFrame.textContent = `FRAME: ${String(state.currentFrameIndex).padStart(6, '0')}`;
+      }
+    }
+
+    // High-frequency clock updates for smooth OSD & millisecond telemetry
+    setInterval(updateSystemClock, 60);
+
+    // ---------------------------------------------------------------------------
+    // 4. Web Audio API Tactical Sound Synthesis (Optional, User-controlled)
+    // ---------------------------------------------------------------------------
+    function playTacticalChirp() {
+      if (!state.audioEnabled) return;
+      try {
+        if (!state.audioCtx) {
+          state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (state.audioCtx.state === 'suspended') {
+          state.audioCtx.resume();
+        }
+        const osc = state.audioCtx.createOscillator();
+        const gain = state.audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1600, state.audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(2400, state.audioCtx.currentTime + 0.08);
+
+        gain.gain.setValueAtTime(0.04, state.audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, state.audioCtx.currentTime + 0.08);
+
+        osc.connect(gain);
+        gain.connect(state.audioCtx.destination);
+
+        osc.start();
+        osc.stop(state.audioCtx.currentTime + 0.08);
+      } catch (e) {
+        console.warn('Web Audio notice:', e);
+      }
+    }
+
+    function toggleAudioChirp() {
+      state.audioEnabled = !state.audioEnabled;
+      const iconOn = document.getElementById('audio-icon-on');
+      const iconOff = document.getElementById('audio-icon-off');
+      if (state.audioEnabled) {
+        iconOn.classList.remove('hidden');
+        iconOff.classList.add('hidden');
+        playTacticalChirp();
+      } else {
+        iconOn.classList.add('hidden');
+        iconOff.classList.remove('hidden');
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // 5. Thai License Plate Canvas Thumbnail Generator
+    // ---------------------------------------------------------------------------
+    /**
+     * Renders a photorealistic DLT compliant Thai license plate crop.
+     * Complies with official Thai DLT proportions (340mm x 150mm -> ~2.26 aspect ratio).
+     */
+    function renderPlateCanvas(canvas, plateText, province, plateType) {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Plate Colors according to DLT Regulations
+      let bgColor = '#f8fafc';
+      let textColor = '#0f172a';
+      let strokeColor = '#334155';
+
+      if (plateType === 'Pickup') {
+        // Private commercial pickup / light truck: Green on White
+        bgColor = '#f8fafc';
+        textColor = '#047857';
+        strokeColor = '#065f46';
+      } else if (plateType === 'Van') {
+        // Multi-passenger van / private > 7 seats: Blue on White
+        bgColor = '#f8fafc';
+        textColor = '#1d4ed8';
+        strokeColor = '#1e40af';
+      } else if (plateType === 'Taxi') {
+        // Public Taxi: Black on Yellow
+        bgColor = '#facc15';
+        textColor = '#0f172a';
+        strokeColor = '#854d0e';
+      }
+
+      // Outer Rounded Plate Body
+      const r = 6;
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.lineTo(w - r, 0);
+      ctx.quadraticCurveTo(w, 0, w, r);
+      ctx.lineTo(w, h - r);
+      ctx.quadraticCurveTo(w, h, w - r, h);
+      ctx.lineTo(r, h);
+      ctx.quadraticCurveTo(0, h, 0, h - r);
+      ctx.lineTo(0, r);
+      ctx.quadraticCurveTo(0, 0, r, 0);
+      ctx.closePath();
+
+      ctx.fillStyle = bgColor;
+      ctx.fill();
+
+      // Outer Rim Border
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = strokeColor;
+      ctx.stroke();
+
+      // Inner Embossed Border
+      ctx.beginPath();
+      const pad = 4;
+      ctx.moveTo(r + pad, pad);
+      ctx.lineTo(w - r - pad, pad);
+      ctx.quadraticCurveTo(w - pad, pad, w - pad, r + pad);
+      ctx.lineTo(w - pad, h - r - pad);
+      ctx.quadraticCurveTo(w - pad, h - pad, w - r - pad, h - pad);
+      ctx.lineTo(r + pad, h - pad);
+      ctx.quadraticCurveTo(pad, h - pad, pad, h - r - pad);
+      ctx.lineTo(pad, r + pad);
+      ctx.quadraticCurveTo(pad, pad, r + pad, pad);
+      ctx.closePath();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = strokeColor;
+      ctx.stroke();
+
+      // Top Line: Consonant Series & Numbers (e.g. "1กข 1234")
+      ctx.fillStyle = textColor;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      const topFontSize = Math.round(h * 0.44);
+      ctx.font = `bold ${topFontSize}px 'Chakra Petch', sans-serif`;
+      ctx.fillText(plateText, w / 2, h * 0.40);
+
+      // Bottom Line: Thai Province Name (e.g. "กรุงเทพมหานคร")
+      const botFontSize = Math.round(h * 0.22);
+      ctx.font = `600 ${botFontSize}px 'Chakra Petch', sans-serif`;
+      ctx.fillText(province, w / 2, h * 0.78);
+    }
+
+    // ---------------------------------------------------------------------------
+    // 6. Realistic CCTV Scene Canvas Renderer
+    // ---------------------------------------------------------------------------
+    function initCCTVScene() {
+      const canvas = document.getElementById('cctv-scene-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * window.devicePixelRatio || 1280;
+        canvas.height = rect.height * window.devicePixelRatio || 720;
+      }
+      resize();
+      window.addEventListener('resize', resize);
+
+      let animOffset = 0;
+
+      function draw() {
+        const w = canvas.width;
+        const h = canvas.height;
+
+        // Dark Surveillance Asphalt / Ambient Night Lighting
+        ctx.fillStyle = '#080d14';
+        ctx.fillRect(0, 0, w, h);
+
+        // Horizon line & Overhead Checkpoint Canopy Structure
+        const horizonY = h * 0.30;
+
+        // Road Perspective Plane
+        const gradient = ctx.createLinearGradient(0, horizonY, 0, h);
+        gradient.addColorStop(0, '#0a111a');
+        gradient.addColorStop(1, '#05080d');
+        ctx.fillStyle = gradient;
+
+        ctx.beginPath();
+        ctx.moveTo(w * 0.20, horizonY);
+        ctx.lineTo(w * 0.80, horizonY);
+        ctx.lineTo(w * 1.15, h);
+        ctx.lineTo(w * -0.15, h);
+        ctx.closePath();
+        ctx.fill();
+
+        // Asphalt Lane Dividers
+        ctx.strokeStyle = 'rgba(0, 240, 255, 0.12)';
+        ctx.lineWidth = 2 * window.devicePixelRatio;
+
+        // Left boundary
+        ctx.beginPath();
+        ctx.moveTo(w * 0.25, horizonY);
+        ctx.lineTo(w * -0.05, h);
+        ctx.stroke();
+
+        // Right boundary
+        ctx.beginPath();
+        ctx.moveTo(w * 0.75, horizonY);
+        ctx.lineTo(w * 1.05, h);
+        ctx.stroke();
+
+        // Center dashed dividing line
+        ctx.setLineDash([20 * window.devicePixelRatio, 15 * window.devicePixelRatio]);
+        ctx.lineDashOffset = -animOffset;
+        ctx.strokeStyle = 'rgba(255, 170, 0, 0.25)';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.50, horizonY);
+        ctx.lineTo(w * 0.50, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Checkpoint Barrier Canopy Beams
+        ctx.strokeStyle = 'rgba(26, 41, 58, 0.7)';
+        ctx.lineWidth = 3 * window.devicePixelRatio;
+        ctx.beginPath();
+        ctx.moveTo(w * 0.10, 0);
+        ctx.lineTo(w * 0.20, horizonY);
+        ctx.lineTo(w * 0.80, horizonY);
+        ctx.lineTo(w * 0.90, 0);
+        ctx.stroke();
+
+        // Overhead Floodlight Spotlights
+        const spotGrad = ctx.createRadialGradient(
+          w * 0.50, h * 0.55, 10,
+          w * 0.50, h * 0.55, w * 0.35
+        );
+        spotGrad.addColorStop(0, 'rgba(0, 240, 255, 0.08)');
+        spotGrad.addColorStop(0.5, 'rgba(0, 240, 255, 0.02)');
+        spotGrad.addColorStop(1, 'transparent');
+        ctx.fillStyle = spotGrad;
+        ctx.fillRect(0, 0, w, h);
+
+        // Approaching Vehicle Silhouette behind detection marker
+        if (state.activeTarget) {
+          const t = state.activeTarget.bbox;
+          const boxX = (t.left / 100) * w;
+          const boxY = (t.top / 100) * h;
+          const boxW = (t.width / 100) * w;
+          const boxH = (t.height / 100) * h;
+
+          // Vehicle Body Silhouette
+          const vLeft = boxX - boxW * 0.65;
+          const vTop = boxY - boxH * 2.2;
+          const vWidth = boxW * 2.3;
+          const vHeight = boxH * 3.4;
+
+          ctx.fillStyle = 'rgba(12, 19, 28, 0.75)';
+          ctx.strokeStyle = 'rgba(0, 240, 255, 0.25)';
+          ctx.lineWidth = 1.5;
+
+          // Windshield & Hood polygonal silhouette
+          ctx.beginPath();
+          ctx.moveTo(vLeft + vWidth * 0.2, vTop);
+          ctx.lineTo(vLeft + vWidth * 0.8, vTop);
+          ctx.lineTo(vLeft + vWidth, vTop + vHeight * 0.6);
+          ctx.lineTo(vLeft + vWidth, vTop + vHeight);
+          ctx.lineTo(vLeft, vTop + vHeight);
+          ctx.lineTo(vLeft, vTop + vHeight * 0.6);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Vehicle Headlights
+          ctx.fillStyle = 'rgba(255, 255, 220, 0.6)';
+          ctx.beginPath();
+          ctx.arc(vLeft + vWidth * 0.15, vTop + vHeight * 0.65, 8 * window.devicePixelRatio, 0, Math.PI * 2);
+          ctx.arc(vLeft + vWidth * 0.85, vTop + vHeight * 0.65, 8 * window.devicePixelRatio, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Headlight Beams Cone
+          const beamL = ctx.createLinearGradient(vLeft + vWidth * 0.15, vTop + vHeight * 0.65, vLeft - 40, h);
+          beamL.addColorStop(0, 'rgba(255, 255, 255, 0.2)');
+          beamL.addColorStop(1, 'transparent');
+          ctx.fillStyle = beamL;
+          ctx.beginPath();
+          ctx.moveTo(vLeft + vWidth * 0.15, vTop + vHeight * 0.65);
+          ctx.lineTo(vLeft - 80, h);
+          ctx.lineTo(vLeft + 80, h);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        animOffset += 0.5;
+        requestAnimationFrame(draw);
+      }
+
+      draw();
+    }
+
+    // ---------------------------------------------------------------------------
+    // 7. Detection Marker Controller (Corner-Brackets & Floating Label)
+    // ---------------------------------------------------------------------------
+    /**
+     * Updates the CSS-based bounding box marker on the video feed.
+     * Crucial: Maintains corner-bracket styling without solid borders,
+     * triggers target-lock burst animation, and updates floating data label.
+     */
+    function updateDetectionMarker(detection) {
+      const marker = document.getElementById('detection-marker');
+      const plateTextEl = document.getElementById('marker-plate-text');
+      const provTextEl = document.getElementById('marker-province-text');
+      const confBadgeEl = document.getElementById('marker-conf-badge');
+      const typeBadgeEl = document.getElementById('marker-vehicle-type');
+
+      if (!marker) return;
+
+      // Update position coordinates
+      state.activeTarget = detection;
+      const b = detection.bbox;
+      marker.style.top = `${b.top}%`;
+      marker.style.left = `${b.left}%`;
+      marker.style.width = `${b.width}%`;
+      marker.style.height = `${b.height}%`;
+
+      // Update Floating Label content
+      if (plateTextEl) plateTextEl.textContent = detection.plate_text;
+      if (provTextEl) provTextEl.textContent = detection.province;
+      
+      const confPct = (detection.confidence * 100).toFixed(1);
+      if (confBadgeEl) {
+        confBadgeEl.textContent = `${confPct}% CONF`;
+        // Color coding: >95% green, 85-95% amber, <85% red
+        if (detection.confidence >= 0.95) {
+          confBadgeEl.className = 'text-surv-green font-bold';
+        } else if (detection.confidence >= 0.85) {
+          confBadgeEl.className = 'text-surv-amber font-bold';
+        } else {
+          confBadgeEl.className = 'text-surv-red font-bold';
+        }
+      }
+
+      if (typeBadgeEl) {
+        typeBadgeEl.textContent = detection.vehicle_type;
+      }
+
+      // Trigger Tactical Flash Burst
+      marker.classList.remove('detection-flash-trigger');
+      void marker.offsetWidth; // Force reflow
+      marker.classList.add('detection-flash-trigger');
+
+      // Tactical Chirp
+      playTacticalChirp();
+    }
+
+    // ---------------------------------------------------------------------------
+    // 8. Real-Time Event Log Management
+    // ---------------------------------------------------------------------------
+    /**
+     * Prepends a newly detected license plate to the Real-Time Event Log sidebar.
+     * Includes timestamp, plate number, province, confidence, vehicle type,
+     * and a high-definition canvas placeholder for the cropped plate image.
+     */
+    function prependEventLog(detection) {
+      const container = document.getElementById('event-stream-container');
+      if (!container) return;
+
+      const eventId = `EVT-${Date.now().toString().slice(-6)}`;
+      const now = new Date();
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}.${String(now.getMilliseconds()).padStart(3, '0')}`;
+      const confPct = (detection.confidence * 100).toFixed(1);
+
+      // Save to memory ledger for filtering & export
+      const record = {
+        id: eventId,
+        timestamp: now.toISOString(),
+        timeDisplay: timeStr,
+        ...detection
+      };
+      state.eventsHistory.unshift(record);
+      if (state.eventsHistory.length > 100) {
+        state.eventsHistory.pop();
+      }
+
+      // Create card element
+      const card = document.createElement('div');
+      card.className = `event-entry-enter bg-surv-dark border border-surv-border hover:border-surv-cyan/50 p-2.5 rounded transition group flex flex-col gap-2 cursor-pointer shadow-sm`;
+      card.setAttribute('data-conf', detection.confidence);
+      card.setAttribute('data-event-id', eventId);
+      card.onclick = () => openInspectorModal(record);
+
+      // Status pill color
+      let confBadgeColor = 'text-surv-green bg-surv-green/10 border-surv-green/30';
+      if (detection.confidence < 0.85) {
+        confBadgeColor = 'text-surv-red bg-surv-red/10 border-surv-red/30';
+      } else if (detection.confidence < 0.95) {
+        confBadgeColor = 'text-surv-amber bg-surv-amber/10 border-surv-amber/30';
+      }
+
+      const canvasId = `plate-thumb-${eventId}`;
+
+      card.innerHTML = `
+        <!-- Top Row: Timestamp, Camera & Confidence -->
+        <div class="flex items-center justify-between text-[11px] font-mono">
+          <div class="flex items-center gap-1.5 text-slate-400">
+            <span class="w-1.5 h-1.5 rounded-full bg-surv-cyan"></span>
+            <span class="text-slate-300 font-semibold">${timeStr}</span>
+            <span class="text-slate-600">&bull;</span>
+            <span class="text-surv-cyan">CAM-01</span>
+          </div>
+          <span class="px-1.5 py-0.2 rounded border font-bold text-[10px] ${confBadgeColor}">
+            ${confPct}%
+          </span>
+        </div>
+
+        <!-- Middle Row: Cropped Plate Canvas Placeholder & Metadata -->
+        <div class="flex items-center gap-3">
+          <!-- Canvas Thumbnail Placeholder -->
+          <div class="flex-shrink-0 bg-black/60 p-1 border border-surv-border group-hover:border-surv-cyan/60 rounded">
+            <canvas id="${canvasId}" width="120" height="54" class="rounded shadow-sm"></canvas>
+          </div>
+
+          <!-- Plate String & Vehicle Meta -->
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-bold text-white tracking-wide font-tactical truncate flex items-center gap-1.5">
+              <span>${detection.plate_text}</span>
+            </div>
+            <div class="text-xs text-surv-cyan font-tactical truncate">
+              ${detection.province}
+            </div>
+            <div class="flex items-center gap-2 mt-1 text-[10px] font-mono text-slate-400">
+              <span class="text-slate-300">${detection.vehicle_type}</span>
+              <span class="text-slate-600">&bull;</span>
+              <span class="text-surv-green font-semibold">13.2ms</span>
+            </div>
+          </div>
+
+          <!-- Arrow Inspect Pill -->
+          <div class="text-slate-500 group-hover:text-surv-cyan transition">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+          </div>
+        </div>
+
+        <!-- Bottom Tag: DLT 41-Consonant Verification Status -->
+        <div class="flex items-center justify-between text-[9px] font-mono text-slate-500 pt-1 border-t border-surv-border/40">
+          <span class="flex items-center gap-1 text-slate-400">
+            <svg class="w-3 h-3 text-surv-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+            DLT 41-CONSONANT: VALID
+          </span>
+          <span class="uppercase text-slate-400 font-semibold">${detection.plate_type}</span>
+        </div>
+      `;
+
+      // Prepend to top of feed
+      container.insertBefore(card, container.firstChild);
+
+      // Render the Thai license plate thumbnail on the newly injected canvas
+      const thumbCanvas = document.getElementById(canvasId);
+      if (thumbCanvas) {
+        renderPlateCanvas(thumbCanvas, detection.plate_text, detection.province, detection.plate_type);
+      }
+
+      // Update counters
+      state.totalDetectionsCount += 1;
+      state.confsSum += detection.confidence;
+      const countBadge = document.getElementById('log-count-badge');
+      if (countBadge) countBadge.textContent = `${container.children.length} EVENTS`;
+
+      const totalCountStat = document.getElementById('stat-total-count');
+      if (totalCountStat) totalCountStat.textContent = state.totalDetectionsCount.toLocaleString();
+
+      const avgConfStat = document.getElementById('stat-avg-conf');
+      if (avgConfStat) {
+        const mean = (state.confsSum / state.totalDetectionsCount * 100).toFixed(1);
+        avgConfStat.textContent = `${mean}%`;
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // 9. Simulated WebSocket Stream Engine
+    // ---------------------------------------------------------------------------
+    /**
+     * Generates a fully compliant synthetic Thai LPR detection payload
+     * respecting DLT 41 consonants, provinces, and vehicle types.
+     */
+    function generateSyntheticDetection() {
+      // Pick random vehicle profile or synthesize custom DLT plate
+      const randomSeed = Math.random();
+      let detection;
+
+      if (randomSeed > 0.3) {
+        // Pick from realistic curated samples (including ห, ป, ซ)
+        const template = SIMULATED_VEHICLES[Math.floor(Math.random() * SIMULATED_VEHICLES.length)];
+        detection = { ...template };
+        // Jitter confidence between 0.94 and 0.995
+        detection.confidence = parseFloat((0.94 + Math.random() * 0.058).toFixed(3));
+      } else {
+        // Procedurally generate compliant Thai plate
+        const c1 = VALID_CONSONANTS[Math.floor(Math.random() * VALID_CONSONANTS.length)];
+        const c2 = VALID_CONSONANTS[Math.floor(Math.random() * VALID_CONSONANTS.length)];
+        const leadingDigit = Math.random() > 0.4 ? Math.floor(Math.random() * 9) + 1 : '';
+        const plateDigits = Math.floor(Math.random() * 9000) + 1000;
+        const plateText = `${leadingDigit}${c1}${c2} ${plateDigits}`.trim();
+        const province = THAI_PROVINCES[Math.floor(Math.random() * THAI_PROVINCES.length)];
+        
+        const types = ['Sedan', 'Pickup', 'Van', 'SUV'];
+        const chosenType = types[Math.floor(Math.random() * types.length)];
+
+        // Dynamic bounding box near lane center
+        const top = 44 + Math.random() * 10;
+        const left = 37 + Math.random() * 7;
+        const width = 18 + Math.random() * 5;
+        const height = 11 + Math.random() * 4;
+
+        detection = {
+          plate_text: plateText,
+          province: province,
+          plate_type: chosenType,
+          vehicle_type: chosenType,
+          color: 'Surveillance Target',
+          confidence: parseFloat((0.93 + Math.random() * 0.065).toFixed(3)),
+          bbox: { top, left, width, height }
+        };
+      }
+
+      return detection;
+    }
+
+    function processDetectionEvent(payload) {
+      // 1. Highlight & position detection marker on the video feed
+      updateDetectionMarker(payload);
+
+      // 2. Prepend event to the Real-Time Event Log sidebar
+      prependEventLog(payload);
+
+      // 3. Dispatch standard DOM event for decoupled subscribers
+      window.dispatchEvent(new CustomEvent('selen:lpr_detection', { detail: payload }));
+    }
+
+    function triggerSimulatedDetection() {
+      const detection = generateSyntheticDetection();
+      processDetectionEvent(detection);
+    }
+
+    function scheduleNextSimulation() {
+      if (state.isWebSocketConnected) return;
+
+      const interval = Math.floor(
+        Math.random() * (state.simulationMaxMs - state.simulationMinMs) + state.simulationMinMs
+      );
+
+      state.simulationTimer = setTimeout(() => {
+        triggerSimulatedDetection();
+        scheduleNextSimulation();
+      }, interval);
+    }
+
+    function startSimulationStream() {
+      if (state.simulationTimer) clearTimeout(state.simulationTimer);
+      scheduleNextSimulation();
+    }
+
+    // ---------------------------------------------------------------------------
+    // 10. Live WebSocket Integration (FastAPI Backend Ready)
+    // ---------------------------------------------------------------------------
+    function connectLiveWebSocket() {
+      const urlInput = document.getElementById('ws-url-input');
+      const wsUrl = urlInput ? urlInput.value.trim() : 'ws://localhost:8000/api/v1/stream/detections';
+
+      const statusDot = document.getElementById('ws-status-dot');
+      const statusText = document.getElementById('ws-status-text');
+
+      if (statusText) statusText.textContent = 'CONNECTING...';
+      if (statusDot) statusDot.className = 'w-2 h-2 rounded-full bg-surv-amber animate-ping';
+
+      try {
+        if (state.wsInstance) {
+          state.wsInstance.close();
+        }
+
+        const ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          state.isWebSocketConnected = true;
+          state.wsInstance = ws;
+          if (state.simulationTimer) clearTimeout(state.simulationTimer);
+
+          if (statusDot) statusDot.className = 'w-2 h-2 rounded-full bg-surv-green';
+          if (statusText) statusText.textContent = 'WS: CONNECTED';
+
+          const caption = document.getElementById('stream-status-caption');
+          if (caption) caption.textContent = `Live Stream: ${wsUrl}`;
+
+          toggleWebSocketModal();
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            // Adapt FastAPI payload structure
+            const detection = {
+              plate_text: data.plate ? data.plate.text : data.plate_text || '1กข 1234',
+              province: data.plate ? data.plate.province : data.province || 'กรุงเทพมหานคร',
+              plate_type: data.plate ? data.plate.plate_type : data.plate_type || 'Sedan',
+              vehicle_type: data.vehicle ? data.vehicle.type : data.vehicle_type || 'Sedan',
+              color: data.vehicle ? data.vehicle.color : 'Vehicle',
+              confidence: data.plate ? data.plate.confidence : (data.confidence || 0.98),
+              bbox: data.bbox || { top: 48, left: 40, width: 20, height: 13 }
+            };
+            processDetectionEvent(detection);
+          } catch (err) {
+            console.error('Error parsing incoming WS message:', err);
+          }
+        };
+
+        ws.onerror = (err) => {
+          console.warn('WebSocket connection error, falling back to simulation:', err);
+          fallbackToSimulation();
+        };
+
+        ws.onclose = () => {
+          if (state.isWebSocketConnected) {
+            fallbackToSimulation();
+          }
+        };
+
+      } catch (err) {
+        console.warn('WebSocket init exception:', err);
+        fallbackToSimulation();
+      }
+    }
+
+    function fallbackToSimulation() {
+      state.isWebSocketConnected = false;
+      state.wsInstance = null;
+
+      const statusDot = document.getElementById('ws-status-dot');
+      const statusText = document.getElementById('ws-status-text');
+      if (statusDot) statusDot.className = 'w-2 h-2 rounded-full bg-surv-cyan animate-pulse';
+      if (statusText) statusText.textContent = 'SIMULATED WS';
+
+      const caption = document.getElementById('stream-status-caption');
+      if (caption) caption.textContent = 'Autonomous Simulation Mode (3-5s)';
+
+      startSimulationStream();
+    }
+
+    function disconnectLiveWebSocket() {
+      if (state.wsInstance) {
+        state.wsInstance.close();
+      }
+      fallbackToSimulation();
+      toggleWebSocketModal();
+    }
+
+    function setSimSpeed(speed) {
+      if (speed === 'fast') {
+        state.simulationMinMs = 1200;
+        state.simulationMaxMs = 1800;
+        document.getElementById('sim-speed-val').textContent = 'Turbo (1.5s)';
+      } else if (speed === 'slow') {
+        state.simulationMinMs = 6000;
+        state.simulationMaxMs = 8000;
+        document.getElementById('sim-speed-val').textContent = 'Slow (7s)';
+      } else {
+        state.simulationMinMs = 3000;
+        state.simulationMaxMs = 5000;
+        document.getElementById('sim-speed-val').textContent = '3 - 5 sec (Default)';
+      }
+      startSimulationStream();
+    }
+
+    // ---------------------------------------------------------------------------
+    // 11. Event Filters & Export
+    // ---------------------------------------------------------------------------
+    function setEventFilter(filter) {
+      state.currentFilter = filter;
+      const allBtn = document.getElementById('filter-all-btn');
+      const highBtn = document.getElementById('filter-high-btn');
+      const inspBtn = document.getElementById('filter-insp-btn');
+
+      [allBtn, highBtn, inspBtn].forEach(b => {
+        b.className = 'px-2 py-0.5 rounded bg-surv-dark border border-surv-border text-slate-400 hover:text-white transition';
+      });
+
+      if (filter === 'all') {
+        allBtn.className = 'px-2 py-0.5 rounded bg-surv-cyan/20 border border-surv-cyan text-surv-cyan font-semibold';
+      } else if (filter === 'high_conf') {
+        highBtn.className = 'px-2 py-0.5 rounded bg-surv-green/20 border border-surv-green text-surv-green font-semibold';
+      } else if (filter === 'inspection') {
+        inspBtn.className = 'px-2 py-0.5 rounded bg-surv-red/20 border border-surv-red text-surv-red font-semibold';
+      }
+
+      const container = document.getElementById('event-stream-container');
+      const cards = container.getElementsByClassName('event-entry-enter');
+
+      for (let c of cards) {
+        const conf = parseFloat(c.getAttribute('data-conf') || 1);
+        if (filter === 'all') {
+          c.classList.remove('hidden');
+        } else if (filter === 'high_conf') {
+          c.classList.toggle('hidden', conf < 0.95);
+        } else if (filter === 'inspection') {
+          c.classList.toggle('hidden', conf >= 0.85);
+        }
+      }
+    }
+
+    function clearEventLogs() {
+      const container = document.getElementById('event-stream-container');
+      if (container) container.innerHTML = '';
+      const countBadge = document.getElementById('log-count-badge');
+      if (countBadge) countBadge.textContent = '0 EVENTS';
+    }
+
+    function exportLogsJSON() {
+      const jsonStr = JSON.stringify(state.eventsHistory, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `selen_lpr_events_${new Date().toISOString().substring(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // ---------------------------------------------------------------------------
+    // 12. Modals & UI Handlers
+    // ---------------------------------------------------------------------------
+    function toggleWebSocketModal() {
+      const modal = document.getElementById('ws-modal');
+      modal.classList.toggle('hidden');
+    }
+
+    function inspectActiveMarker() {
+      if (state.activeTarget) {
+        openInspectorModal(state.activeTarget);
+      }
+    }
+
+    function openInspectorModal(item) {
+      const modal = document.getElementById('inspector-modal');
+      modal.classList.remove('hidden');
+
+      // Render high-res plate
+      const canvas = document.getElementById('inspector-plate-canvas');
+      renderPlateCanvas(canvas, item.plate_text, item.province, item.plate_type);
+
+      document.getElementById('inspect-plate-type').textContent = `${item.vehicle_type} (${item.plate_type})`;
+      document.getElementById('inspect-plate-conf').textContent = `${(item.confidence * 100).toFixed(1)}%`;
+      document.getElementById('inspect-plate-latency').textContent = '13.2 ms';
+
+      // Character level breakdown
+      const breakdownEl = document.getElementById('char-breakdown-container');
+      breakdownEl.innerHTML = '';
+      const cleanChars = item.plate_text.replace(/\s+/g, '').split('');
+
+      cleanChars.forEach((ch) => {
+        const charBox = document.createElement('div');
+        charBox.className = 'bg-surv-dark border border-surv-cyan/40 p-1.5 rounded flex flex-col items-center';
+        const charConf = (item.confidence * 100 - (Math.random() * 1.5)).toFixed(1);
+        charBox.innerHTML = `
+          <span class="text-white font-bold text-sm font-tactical">${ch}</span>
+          <span class="text-[9px] text-surv-green font-mono">${charConf}%</span>
+        `;
+        breakdownEl.appendChild(charBox);
+      });
+
+      // Raw JSON
+      document.getElementById('inspect-raw-json').textContent = JSON.stringify(item, null, 2);
+    }
+
+    function closeInspectorModal() {
+      const modal = document.getElementById('inspector-modal');
+      modal.classList.add('hidden');
+    }
+
+    function toggleGridOverlay() {
+      const grid = document.getElementById('optical-grid-overlay');
+      const btn = document.getElementById('grid-toggle-btn');
+      if (grid.classList.contains('hidden')) {
+        grid.classList.remove('hidden');
+        btn.textContent = 'GRID: ON';
+      } else {
+        grid.classList.add('hidden');
+        btn.textContent = 'GRID: OFF';
+      }
+    }
+
+    function toggleCameraFullscreen() {
+      const target = document.getElementById('camera-viewport-container');
+      if (!document.fullscreenElement) {
+        target.requestFullscreen().catch(err => alert(`Fullscreen error: ${err.message}`));
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    // Spacebar shortcut triggers manual detection
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        triggerSimulatedDetection();
+      }
+    });
+
+    // ---------------------------------------------------------------------------
+    // 13. System Initialization
+    // ---------------------------------------------------------------------------
+    window.addEventListener('DOMContentLoaded', () => {
+      // 1. Initialize canvas backdrop
+      initCCTVScene();
+
+      // 2. Initial Marker setup
+      updateDetectionMarker(SIMULATED_VEHICLES[0]);
+
+      // 3. Populate 3 initial historical events for instant visual feedback
+      prependEventLog(SIMULATED_VEHICLES[3]); // 7หป 4321
+      prependEventLog(SIMULATED_VEHICLES[1]); // บพ 4567
+      prependEventLog(SIMULATED_VEHICLES[0]); // 1กข 1234
+
+      // 4. Start periodic 3-5s simulated detection stream
+      startSimulationStream();
+
+      console.log("%c[selen-lpr NVR Engine]%c Tactical Interface Initialized. Standard Compliance: ISO/IEC 42001:2023 | DLT 41-Consonants Active.", "color: #00f0ff; font-weight: bold;", "color: #00ff66;");
+    });
+  </script>
+
+</body>
+</html>

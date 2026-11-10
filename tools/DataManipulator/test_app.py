@@ -6,7 +6,7 @@ Unit and Integration tests for Thai LPR Annotator:
 - Batch removal of '_dup' duplicate images
 - Session persistence
 - GUI instantiation with 9-column Check View
-- AI Reader (a1.3.4.1) inference, comparison, and selective/all replacement
+- AI Reader (thai-lpr-reader) inference, comparison, and selective/all replacement
 """
 
 import os
@@ -231,7 +231,7 @@ def test_gui_headless():
 
 
 def test_ai_reader_comparison_and_replace():
-    print("[7/7] Testing AI Reader (a1.3.4.1) Inference, Comparison & Replacement...")
+    print("[7/7] Testing AI Reader (thai-lpr-reader) Inference, Comparison & Replacement...")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PyQt6.QtWidgets import QApplication
     from app.main_window import MainWindow
@@ -246,7 +246,7 @@ def test_ai_reader_comparison_and_replace():
             assert res["d3"] == "ศส", f"Expected 'ศส', got {res['d3']}"
             assert res["d4"] == "1009", f"Expected '1009', got {res['d4']}"
             assert res["province"] == "กรุงเทพมหานคร", f"Expected 'กรุงเทพมหานคร', got {res['province']}"
-            print(f"  -> Real image a1.3.4.1 inference OK: {res['full_plate']} (Confidence: {res['confidence']:.2%})")
+            print(f"  -> Real image thai-lpr-reader inference OK: {res['full_plate']} (Confidence: {res['confidence']:.2%})")
     else:
         print(f"  -> Checkpoint not found at {reader.weights_path}; skipping real weight inference.")
 
@@ -356,6 +356,75 @@ def test_ai_reader_comparison_and_replace():
     print("  -> AI Reader Comparison & Replacement All Verified OK")
 
 
+def test_tabs_and_helper_model_switching():
+    print("[8/8] Testing Tab Separation & Helper Model Switching...")
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PyQt6.QtWidgets import QApplication
+    from app.main_window import MainWindow
+    from app.detector_helper import DetectorHelper
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    # 1. Verify Tab Separation
+    assert hasattr(window, "tab_widget"), "MainWindow must have tab_widget"
+    assert window.tab_widget.count() == 2, f"Expected 2 tabs, got {window.tab_widget.count()}"
+    assert "Reading" in window.tab_widget.tabText(0), f"Tab 0 must be Plate Reading, got {window.tab_widget.tabText(0)}"
+    assert "Detection" in window.tab_widget.tabText(1), f"Tab 1 must be Object Detection, got {window.tab_widget.tabText(1)}"
+
+    # 2. Test Tab Switching -> dataset_type sync
+    window.tab_widget.setCurrentIndex(1)
+    assert window.session.dataset_type == "yolo", f"Expected 'yolo', got {window.session.dataset_type}"
+    assert window.btn_det_save.text() == "💾 Save Bounding Boxes (Enter)"
+
+    window.tab_widget.setCurrentIndex(0)
+    assert window.session.dataset_type == "ocr", f"Expected 'ocr', got {window.session.dataset_type}"
+    assert window.btn_approve.text() == "✅ Correct / Approve (Enter)"
+
+    # 3. Test Toggle View Mode
+    window._on_toggle_view_mode()
+    assert window.tab_widget.currentIndex() == 1
+    assert window.session.dataset_type == "yolo"
+
+    window._on_toggle_view_mode()
+    assert window.tab_widget.currentIndex() == 0
+    assert window.session.dataset_type == "ocr"
+    print("  -> Tab separation and mode switching OK")
+
+    # 4. Test Helper Model Switching: OCR Reader
+    assert hasattr(window, "combo_ocr_model")
+    assert window.combo_ocr_model.count() > 0, "Expected at least 1 OCR model in dropdown"
+    ocr_models = PlateReader.get_available_models()
+    assert len(ocr_models) >= 1
+    first_ocr_path = window.combo_ocr_model.itemData(0)
+    window.combo_ocr_model.setCurrentIndex(0)
+    assert PlateReader.get_instance().weights_path == Path(first_ocr_path).resolve()
+    print(f"  -> OCR helper model switching verified ({window.combo_ocr_model.count()} models discovered)")
+
+    # 5. Test Helper Model Switching: YOLO Detector
+    assert hasattr(window, "combo_det_model")
+    assert window.combo_det_model.count() > 0, "Expected at least 1 YOLO detector model in dropdown"
+    det_models = DetectorHelper.get_available_models()
+    assert len(det_models) >= 1
+    first_det_path = window.combo_det_model.itemData(0)
+    window.combo_det_model.setCurrentIndex(0)
+    det_inst = DetectorHelper.get_instance()
+    assert det_inst.model_path == Path(first_det_path).resolve()
+    assert det_inst.model is not None, f"Detector helper failed to load: {det_inst.error_msg}"
+    print(f"  -> YOLO detector helper switching verified ({window.combo_det_model.count()} models discovered)")
+
+    # 6. Test Detector Inference on mock image
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_img = Path(tmp_dir) / "test_frame.jpg"
+        Image.new("RGB", (640, 480), color=(100, 100, 100)).save(tmp_img)
+        boxes = det_inst.predict(str(tmp_img), conf=0.1)
+        assert isinstance(boxes, list)
+        print("  -> Detector helper predict execution verified OK")
+
+    window._stop_workers()
+    print("  -> Tabs & Helper Model Switching All Verified OK")
+
+
 if __name__ == "__main__":
     import traceback
     try:
@@ -366,7 +435,8 @@ if __name__ == "__main__":
         test_session_persistence()
         test_ai_reader_comparison_and_replace()
         test_gui_headless()
-        print("\nALL 7 TEST SUITES PASSED!")
+        test_tabs_and_helper_model_switching()
+        print("\nALL 8 TEST SUITES PASSED!")
     except Exception as e:
         traceback.print_exc()
         sys.exit(1)
